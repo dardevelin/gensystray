@@ -1,3 +1,4 @@
+make the program generate a default config file in case there is none
 makefile or autoconf
 write list of dependencies
 set dlist as a submodule
