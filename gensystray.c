@@ -114,7 +114,7 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 			 G_CALLBACK(gtk_main_quit),
 			 NULL);
 
-	gtk_menu_shell_append((GtkMenuShell*)menu, exit_item);
+	gtk_menu_shell_prepend((GtkMenuShell*)menu, exit_item);
 	gtk_widget_show_all(GTK_WIDGET(menu));
 	
 	// show the menu
