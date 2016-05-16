@@ -40,3 +40,7 @@ to your custom config file
 ###Instructions to compile
 install libgtk-3-dev libsdl2-2.0-2-dev gcc
 run build_gcc.sh
+
+
+###How it looks like
+[![GenSysTray](http://i2.ytimg.com/vi/Ip3fAB-YqTg/0.jpg)](https://www.youtube.com/watch?v=Ip3fAB-YqTg)
