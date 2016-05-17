@@ -25,7 +25,6 @@
 #include "gensystray_utils.h"
 #include "gensystray_errors.h"
 
-
 // global default values
 static const char *def_config_path = ".config/gensystray";
 static const char *def_config_file = "gensystray.cfg";
@@ -62,8 +61,6 @@ char *get_config_path(void)
 	sprintf(path,"%s/%s/%s", home, def_config_path, def_config_file);
 	return path;
 }
-
-
 
 struct sOption *get_config_option(FILE *stream)
 {
@@ -161,7 +158,7 @@ char *get_icon_path(FILE *stream)
 		goto clean_exit;
 	}
 
-	// +1 to skip the '@' 
+	// +1 to skip the '@'
 	ipath = fextract(stream, start_pos+1, end_pos);
 
 clean_exit:
