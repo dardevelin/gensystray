@@ -8,7 +8,7 @@ http://www.gnu.org/licenses/gpl-3.0.txt
 
 ###How to configure GenSysTray ?
 
-open .config/gensystray/gensystray.config with your favorite
+open .config/gensystray/gensystray.cfg with your favorite
 text editor:
 
 ```
