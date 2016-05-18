@@ -14,6 +14,13 @@ text editor:
 ```
 @/full/path/to/the/16x16/icon.png
 
+since you may be using multiple instances
+of gensystray. you can set a tooltip text for
+the icon by setting text between single quotes
+ended with a new line like so
+
+'the tooltiptext'
+
 [name of the button]
 command to execute on button click
 
