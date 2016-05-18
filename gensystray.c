@@ -232,14 +232,16 @@ int main(int argc, char **argv)
 					       option_dalloc));
 	}
 
-	// we no longer need cfg, close it
-	fclose(cfg);
-
 	g_signal_connect(G_OBJECT(icon), "popup-menu",
 			 G_CALLBACK(gensystray_on_menu),
 			 &optlist);
 
-	gtk_status_icon_set_tooltip_text(icon, tooltip_text);
+	if(NULL != (tooltip_text = get_tooltip_text(cfg)) ) {
+		gtk_status_icon_set_tooltip_text(icon, get_tooltip_text(cfg));
+	}
+	
+	// we no longer need cfg, close it
+	fclose(cfg);
 
 	gtk_status_icon_set_visible(icon, TRUE);
 

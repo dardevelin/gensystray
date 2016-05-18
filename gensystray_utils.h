@@ -44,7 +44,7 @@ char *sstrndup(const char *src, size_t slen);
  *
  * notice: this function changes the stream position
  */
-long fstrchr(FILE *stream, const long pos, const int c);
+long fstrchr(FILE * const stream, const long pos, const int c);
 
 /* this function returns a new null terminated string with the contents
  * found between 'start_pos' and 'end_pos' stream positions
