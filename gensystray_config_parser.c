@@ -165,3 +165,33 @@ clean_exit:
 	fseek(stream, stream_pos, SEEK_SET);
 	return ipath;
 }
+
+char *get_tooltip_text(FILE *stream)
+{
+	char *ttext = NULL;
+	const long stream_pos = ftell(stream);
+
+	rewind(stream);
+
+	long start_pos = fstrchr(stream, ftell(stream), '\'');
+
+	if(NOT_FOUND == start_pos) {
+		fprintf(stderr,"couldnt' find tooltip text in file\n");
+		goto clean_exit;
+	}
+
+	long end_pos = fstrchr(stream, ftell(stream), '\n');
+
+	if(NOT_FOUND == end_pos) {
+		fprintf(stderr,"formatting error, tooltip text invalid\n");
+		goto clean_exit;
+	}
+
+	// +1 to skip the '\'' and -1 to remove the trailing '\''
+	ttext = fextract(stream, start_pos+1, end_pos-1);
+
+clean_exit:
+
+	fseek(stream, stream_pos, SEEK_SET);
+	return ttext;
+}
