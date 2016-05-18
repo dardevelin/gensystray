@@ -125,7 +125,7 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 		       button, activate_time);
 }
 
-void cfg_changed_cb(GFileMonitor *monitor, GFile *file, GFile *other_file,
+void on_cfg_changed(GFileMonitor *monitor, GFile *file, GFile *other_file,
 		    GFileMonitorEvent event_type, gpointer user_data)
 {	
 	struct dlist_list *optlist = (struct dlist_list*)user_data;
@@ -151,8 +151,6 @@ void cfg_changed_cb(GFileMonitor *monitor, GFile *file, GFile *other_file,
 	free(cfg_path);
 
 	dlist_list_delete_all_nodes(optlist);
-
-	void option_dalloc(void *data);
 
 	while(NULL != (option = get_config_option(cfg)) ) {
 		dlist_node_push(optlist,
@@ -210,7 +208,7 @@ int main(int argc, char **argv)
 
 	// set our handler for changes
 	g_signal_connect(G_OBJECT(cfg_monitor), "changed",
-			 G_CALLBACK(cfg_changed_cb),
+			 G_CALLBACK(on_cfg_changed),
 			 &optlist);
 
 	// clean up, we no longer need cfg_path
