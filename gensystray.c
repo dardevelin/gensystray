@@ -238,6 +238,8 @@ int main(int argc, char **argv)
 
 	if(NULL != (tooltip_text = get_tooltip_text(cfg)) ) {
 		gtk_status_icon_set_tooltip_text(icon, get_tooltip_text(cfg));
+		// we no longer need tooltip_text
+		free(tooltip_text);
 	}
 	
 	// we no longer need cfg, close it
@@ -253,6 +255,7 @@ int main(int argc, char **argv)
 	// clean our cfg_gfile and cfg_monitor
 	g_object_unref(cfg_gfile);
 	g_object_unref(cfg_monitor);
+
 	SDL_Quit();
 	
 
