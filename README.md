@@ -38,7 +38,7 @@ Yes! You can set the environment variable GENSYSTRAY_PATH
 to your custom config file
 
 ###Instructions to compile
-install libgtk-3-dev libsdl2-2.0-2-dev gcc
+install libgtk-3-dev libsdl2-dev gcc
 run build_gcc.sh
 
 
