@@ -84,11 +84,16 @@ void *gensystray_option_to_item(void *carry, void *data, void *param)
 	struct sOption *option = (struct sOption*)data;
 	GtkWidget *menu_item = NULL;
 
-	menu_item = gtk_menu_item_new_with_label(option->name);
+	if('-' == option->name[0] && '-' == option->command[0]) {
+		menu_item = gtk_separator_menu_item_new();
+	} else {
 
-	g_signal_connect(G_OBJECT(menu_item), "activate",
-			 G_CALLBACK(delegate_system_call),
-			 option->command);
+		menu_item = gtk_menu_item_new_with_label(option->name);
+
+		g_signal_connect(G_OBJECT(menu_item), "activate",
+				 G_CALLBACK(delegate_system_call),
+				 option->command);
+	}
 
 	// associate the button/item to the menu
 	gtk_menu_shell_append((GtkMenuShell*)menu, menu_item);
