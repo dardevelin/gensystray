@@ -27,6 +27,14 @@ command to execute on button click
 [name of another button]
 command to execute on button click
 
+the next option is actually a separator
+
+[-]
+-
+
+[some other button]
+another command
+
 all the rest is ignore except text between square
 brackets and text in the next line right after
 ```
