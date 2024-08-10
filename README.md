@@ -3,7 +3,7 @@
 A configurable System Tray Icon.
 Have your common routines right on your system tray.
 
-
+![Gensystray Logo](assets/logo_with_grey_background_1024x1024.png)
 
 ## License
 
@@ -168,6 +168,3 @@ To ensure the quality and stability of your codebase, it is recommended to set u
 
 TODO
 
-## Logo
-
-![Gensystray Logo](assets/logo_with_grey_background_1024x1024.png)
