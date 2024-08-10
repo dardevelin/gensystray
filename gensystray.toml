@@ -1,0 +1,100 @@
+version = "2.0.0"
+
+# Gensystray Instances Configuration
+[gensystray]
+# Hot Reload [default: true], defines if gensystray should restart the instances when the configuration file changes
+hot_reload = true
+
+# Instances Number [default: 1], defines the number of instances that gensystray should create (system tray icons)
+instances_number = 3
+
+# Trigger Mode [default: "click"], defines the trigger mode for the system tray icons [allowed: "click", "hover"]
+trigger_mode = "click"
+
+# History Configuration
+# Keep History [default: false], defines if gensystray should keep a history of the commands executed with timestamps
+keep_history = false
+# History File [default: "~/.logs/gensystray_history.log"], defines the path to the history file
+history_file = "~/.logs/gensystray_history.log"
+# History Limit [default: 100], defines the maximum number of history entries to keep
+history_limit = 100
+
+# Instance 1 Configuration
+[instance_1.list]
+tooltip = "Game List"
+icon = "assets/console_handle_icon.png"
+ordering_strategy = "linear"  # [allowed: "linear", "numeral", "alphabetical"]
+
+[[instance_1.list.commands]]
+name = "Counter-Strike: Global Offensive"
+numeral_order = 1
+notify = "Counter-Strike: Global Offensive is now running!"
+command = """
+steam steam://rungameid/730
+"""
+
+[[instance_1.list.commands]]
+name = "Guild Wars 2"
+numeral_order = 2
+notify = "Guild Wars 2 is now running!"
+command = """
+steam steam://rungameid/1289380
+"""
+
+[[instance_1.list.commands]]
+name = "The Sims 4"
+numeral_order = 3
+command = """
+steam steam://rungameid/1222670
+"""
+
+# Instance 2 Configuration
+[instance_2.list]
+tooltip = "Scripts List"
+icon = "assets/terminal_logo.png"
+ordering_strategy = "alphabetical"  # [allowed: "linear", "numeral", "alphabetical"]
+
+[[instance_2.list.commands]]
+name = "Coding Focus Mode"
+notify = "Coding Mode Activated"
+command = """
+play ~/Music/coding/*.mp3 &&
+visual-studio-code ~/codebases/
+"""
+
+[[instance_2.list.commands]]
+name = "Music Focus Mode"
+notify = "Music Mode Activated"
+command = """
+play ~/Music/lofi/*.mp3
+"""
+
+[[instance_2.list.commands]]
+name = "Work Focus Mode"
+notify = "Work Mode Activated"
+command = """
+play ~/Music/lofi/*.mp3 &&
+google-chrome-stable https://www.example.tld/
+"""
+
+# Instance 3 Configuration
+[instance_3.list]
+tooltip = "Live Streams List"
+icon = "assets/twitch_logo.png"
+ordering_strategy = "numeral"  # [allowed: "linear", "numeral", "alphabetical"]
+
+[[instance_3.list.commands]]
+name = "Twitch Streamer is Live"
+notify  = ""
+command = """
+~/my_scripts/my_script_checking_if_twitch_streamer_is_live.sh
+"""
+is_live_command = true
+live_refresh = 5  # Refresh rate in seconds
+
+# Event codes and corresponding commands (if required)
+live_refresh_event_codes = [0, 1, 2, 3]
+live_refresh_event_code_0_command = ""
+live_refresh_event_code_1_command = ""
+live_refresh_event_code_2_command = ""
+live_refresh_event_code_3_command = ""
