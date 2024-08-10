@@ -22,17 +22,13 @@ gensystray-migrate path/to/old/gensystray.cfg path/to/new/gensystray_config.toml
 ```
 
 
-- Feature 1: Lorem ipsum dolor sit amet, consectetur adipiscing elit.
-- Feature 2: Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
-- Feature 3: Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+TODO
 
 ## Installation
 
 To install Gensystray, follow these steps:
 
-1. Step 1: Lorem ipsum dolor sit amet, consectetur adipiscing elit.
-2. Step 2: Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
-3. Step 3: Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+TODO
 
 ## Usage | How to Configure Gensystray
 
@@ -66,7 +62,7 @@ You can define multiple instances, each with its own commands and behavior.
 **Instance 1: Example Configuration**
 ```toml
 [instance_1.list]
-tooltip "Game List" # Custom tooltip for the tray icon
+tooltip = "Game List" # Custom tooltip for the tray icon
 icon = "~/.gensystray/assets/console_handle_icon.png"
 ordering_strategy = "linear" # Command ordering: "linear", "numeral", or "alphabetical"
 
@@ -160,39 +156,18 @@ We welcome contributions from the community. To contribute to Gensystray, please
 4. Step 4: Push your changes to your forked repository.
 5. Step 5: Submit a pull request.
 
-## License
-
-Gensystray is licensed under the [MIT License](https://opensource.org/licenses/MIT).
-
 ## Migration from Version 1 to Version 2
 
 To migrate from Gensystray Version 1 to Version 2, follow these steps:
 
-1. Step 1: Back up your existing configuration files.
-2. Step 2: Update your dependencies to the latest version of Gensystray.
-3. Step 3: Review the [migration guide](https://github.com/dardevelin/gensystray/wiki/Migration-Guide) for any breaking changes or new features introduced in Version 2.
-4. Step 4: Update your code to accommodate any necessary changes based on the migration guide.
-5. Step 5: Test your application thoroughly to ensure compatibility with Version 2.
-6. Step 6: Deploy the updated application with Gensystray Version 2.
+TODO
 
 ## Continuous Integration (CI) Pipeline Checks
 
 To ensure the quality and stability of your codebase, it is recommended to set up a CI pipeline with the following checks:
 
-1. Step 1: Linting: Use a linter to enforce code style and catch potential errors.
-2. Step 2: Unit Tests: Write and run unit tests to verify the functionality of your code.
-3. Step 3: Code Coverage: Measure the code coverage of your tests to ensure adequate test coverage.
-4. Step 4: Build and Compilation: Build and compile your application to catch any build errors or compilation issues.
-5. Step 5: Integration Tests: Perform integration tests to validate the interaction between different components of your application.
-6. Step 6: Security Scans: Conduct security scans to identify any vulnerabilities in your code or dependencies.
-7. Step 7: Deployment: Automate the deployment process to ensure consistent and reliable deployments.
-
-By incorporating these CI pipeline checks, you can maintain a high level of code quality and catch issues early in the development process.
+TODO
 
 ## Logo
 
-![Gensystray Logo](path/to/logo.png)
-
-## License
-
-Gensystray is licensed under the [MIT License](https://opensource.org/licenses/MIT).
+![Gensystray Logo](assets/logo_with_grey_background_1024x1024.png)
