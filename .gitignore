@@ -35,3 +35,8 @@ log.txt
 # Ignore cache files
 *.cache
 __pycache__/
+
+
+# Added by cargo
+
+/target
