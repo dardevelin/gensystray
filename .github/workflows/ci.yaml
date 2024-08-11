@@ -3,10 +3,10 @@ name: CI
 on:
   push:
     branches:
-      - main
+      - gensystray-2.0
   pull_request:
     branches:
-      - main
+      - gensystray-2.0
 
 jobs:
   build:
