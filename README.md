@@ -109,6 +109,8 @@ command = """
 """
 is_live_command = true # This command runs in the background
 live_refresh = 5 # Refresh Rate in seconds
+# A text file where the output of scripts can be made visible in Gensystray
+live_refresh_messages_filepath = "~/.gensystray/twitch_stream_message.txt"
 
 # Define actions based on event codes returnyised by the live command
 live_refresh_event_codes = [0, 1, 2, 3]
