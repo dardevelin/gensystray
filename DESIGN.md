@@ -61,6 +61,7 @@ handling notifications and history logging.
 ### Live Command Manager Module
 Manages live commands that run continuously in the background, updating the tray icon or menu based on the commands output.
 
+- **Background Clock**: Generates a periodic "tick". Events that the Live Command Manager/Runner can subscribe to. These ticks can be used to trigger the execution of live commands at regular intervals.
 - **Live Command Runner**: Executes live commands at the specified refresh interval (`live_refresh`) and handles their output.
 - **Event Code Handler**: Processes event codes returned by live commands and triggers corresponding actions, as defined in the configuration.
 - **State Updater**: Updates the tray icon or menu based on the current state of the live command, ensuring that the user is presented with the most current information.
