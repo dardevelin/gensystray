@@ -38,8 +38,7 @@
  * that gtk expects. it spawns the command in a child process
  * using the shell, keeping the ui responsive
  */
-void delegate_system_call(GtkWidget *widget, gpointer user_data)
-{
+void delegate_system_call(GtkWidget *widget, gpointer user_data) {
 	char *argv[] = { "sh", "-c", (char *)user_data, NULL };
 	g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL);
 }
@@ -47,8 +46,7 @@ void delegate_system_call(GtkWidget *widget, gpointer user_data)
 /* this function is a valid GFunc signature for g_slist_foreach
  * it generates a menu item for each option and appends it to the menu
  */
-void gensystray_option_to_item(gpointer data, gpointer param)
-{
+void gensystray_option_to_item(gpointer data, gpointer param) {
 	GtkMenu *menu = (GtkMenu*)param;
 	struct option *option = (struct option*)data;
 	GtkWidget *menu_item = NULL;
@@ -74,8 +72,7 @@ void gensystray_option_to_item(gpointer data, gpointer param)
 /* this functions is creates our popup-menu when it's pressed
  */
 void gensystray_on_menu(GtkStatusIcon *icon, guint button,
-			guint activate_time, gpointer user_data)
-{
+			guint activate_time, gpointer user_data) {
 	GtkMenu *menu = (GtkMenu*)gtk_menu_new();
 
 	struct config *config = (struct config*)user_data;
@@ -99,8 +96,7 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 }
 
 
-static GtkStatusIcon *init_tray(struct config *config)
-{
+static GtkStatusIcon *init_tray(struct config *config) {
 	GtkStatusIcon *icon = NULL;
 
 	if(!config->icon_path) {
@@ -120,8 +116,7 @@ static GtkStatusIcon *init_tray(struct config *config)
 	return icon;
 }
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
 	gtk_init(&argc, &argv);
 
 	char *cfg_path = get_config_path();

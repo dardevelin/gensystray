@@ -19,8 +19,7 @@
 
 #include "gensystray_utils.h"
 
-char *sstrndup(const char *src, size_t slen)
-{
+char *sstrndup(const char *src, size_t slen) {
 	if(!src || 0==slen) {
 		return NULL;
 	}
@@ -36,8 +35,7 @@ char *sstrndup(const char *src, size_t slen)
 	return new;
 }
 
-long fstrchr(FILE * const stream, const long pos, const int c)
-{
+long fstrchr(FILE * const stream, const long pos, const int c) {
 	fseek(stream, pos, SEEK_SET);
 	int ch = 0;
 	while(EOF != (ch = fgetc(stream))) {
@@ -51,8 +49,7 @@ long fstrchr(FILE * const stream, const long pos, const int c)
 	return NOT_FOUND;
 }
 
-char *fextract(FILE * const stream, const long start_pos, const long end_pos)
-{
+char *fextract(FILE * const stream, const long start_pos, const long end_pos) {
 	fseek(stream, start_pos, SEEK_SET);
 	long buf_len = end_pos - start_pos;
 

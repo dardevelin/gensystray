@@ -23,8 +23,7 @@
 #include "gensystray_config_monitor.h"
 
 static void on_cfg_changed(GFileMonitor *monitor, GFile *file, GFile *other_file,
-			   GFileMonitorEvent event_type, gpointer user_data)
-{
+			   GFileMonitorEvent event_type, gpointer user_data) {
 	struct config *config = (struct config *)user_data;
 
 	struct config *updated = load_config(config->config_path);
@@ -50,8 +49,7 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file, GFile *other_file
 	free_config(updated);
 }
 
-GFileMonitor *monitor_config(const char *config_path, struct config *config)
-{
+GFileMonitor *monitor_config(const char *config_path, struct config *config) {
 	if(!config_path || !config)
 		return NULL;
 

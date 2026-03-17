@@ -29,8 +29,7 @@
 static const char *def_config_path = ".config/gensystray";
 static const char *def_config_file = "gensystray.cfg";
 
-char *get_config_path(void)
-{
+char *get_config_path(void) {
 	char *gensystray_env = NULL;
 	gensystray_env = getenv("GENSYSTRAY_PATH");
 	if(NULL != gensystray_env) {
@@ -62,8 +61,7 @@ char *get_config_path(void)
 	return path;
 }
 
-struct option *get_config_option(FILE *stream)
-{
+struct option *get_config_option(FILE *stream) {
 	//find option
 	long optstart = 0;
 
@@ -138,8 +136,7 @@ struct option *get_config_option(FILE *stream)
 	return option;
 }
 
-char *get_icon_path(FILE *stream)
-{
+char *get_icon_path(FILE *stream) {
 	char *ipath = NULL;
 	const long stream_pos = ftell(stream);
 
@@ -167,8 +164,7 @@ clean_exit:
 	return ipath;
 }
 
-char *get_tooltip_text(FILE *stream)
-{
+char *get_tooltip_text(FILE *stream) {
 	char *ttext = NULL;
 	const long stream_pos = ftell(stream);
 
@@ -197,16 +193,14 @@ clean_exit:
 	return ttext;
 }
 
-static void option_dalloc(void *data)
-{
+static void option_dalloc(void *data) {
 	struct option *opt = (struct option *)data;
 	free(opt->name);
 	free(opt->command);
 	free(opt);
 }
 
-struct config *load_config(const char *config_path)
-{
+struct config *load_config(const char *config_path) {
 	FILE *cfg = NULL;
 	struct option *opt = NULL;
 
@@ -242,8 +236,7 @@ struct config *load_config(const char *config_path)
 	return config;
 }
 
-void free_config(struct config *config)
-{
+void free_config(struct config *config) {
 	if(!config)
 		return;
 
