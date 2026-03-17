@@ -37,8 +37,8 @@
 /* import common errors definitions */
 #include "gensystray_errors.h"
 
-/* import gio to enable easy file changes monitoring */
-#include <gio/gio.h>
+/* import config monitor for live config reloading */
+#include "gensystray_config_monitor.h"
 
 /* this function allows easy management of optlist clean up
  * by acting as valid signature to dlist_node_foreach
@@ -130,43 +130,6 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 		       button, activate_time);
 }
 
-void on_cfg_changed(GFileMonitor *monitor, GFile *file, GFile *other_file,
-		    GFileMonitorEvent event_type, gpointer user_data)
-{	
-	struct dlist_list *optlist = (struct dlist_list*)user_data;
-	struct sOption *option = NULL;
-	char *cfg_path = NULL;
-	FILE *cfg = NULL;
-
-	cfg_path = get_config_path();
-	if(!cfg_path) {
-		fprintf(stderr,"couldn't handle build cfg_path on changes\n");
-		return;
-	}
-
-	if( NULL == (cfg = fopen(cfg_path, "r")) ) {
-		//FIXME: use errno
-		//FIXME: create config file
-		fprintf(stderr,"coul not load config file on change\n");
-		free(cfg_path);
-		return;
-	}
-
-	// we no longer need the path
-	free(cfg_path);
-
-	dlist_list_delete_all_nodes(optlist);
-
-	while(NULL != (option = get_config_option(cfg)) ) {
-		dlist_node_push(optlist,
-				dlist_node_new(optlist,
-					       option,
-					       option_dalloc));
-	}
-
-	// we no longer need to cfg file
-	fclose(cfg);
-}
 
 int main(int argc, char **argv)
 {
@@ -187,8 +150,7 @@ int main(int argc, char **argv)
 	char *tooltip_text = "GenSysTray";
 	GtkStatusIcon *icon = NULL;
 	GFileMonitor *cfg_monitor = NULL;
-	GFile *cfg_gfile = NULL;
-	
+
 	// prepare list so it can be used
 	dlist_init(&optlist, NULL, NULL);
 
@@ -205,16 +167,8 @@ int main(int argc, char **argv)
 		exit(CFG_NOT_FOUND);
 	}
 
-	// we need cfg as gio to be able to monitor it
-	cfg_gfile = g_file_new_for_path(cfg_path);
-
-	// lets monitor the cfg to get live changes
-	cfg_monitor = g_file_monitor_file(cfg_gfile, G_FILE_MONITOR_NONE, NULL, NULL);
-
-	// set our handler for changes
-	g_signal_connect(G_OBJECT(cfg_monitor), "changed",
-			 G_CALLBACK(on_cfg_changed),
-			 &optlist);
+	// monitor cfg for live changes
+	cfg_monitor = monitor_config(cfg_path, &optlist);
 
 	// clean up, we no longer need cfg_path
 	free(cfg_path);
@@ -257,8 +211,7 @@ int main(int argc, char **argv)
 
 	// the application is shutting down. clean up
 	dlist_list_delete_all_nodes(&optlist);
-	// clean our cfg_gfile and cfg_monitor
-	g_object_unref(cfg_gfile);
+	// clean cfg_monitor
 	g_object_unref(cfg_monitor);
 
 	SDL_Quit();

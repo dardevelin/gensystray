@@ -5,7 +5,7 @@ LDFLAGS =
 PKG_CFLAGS = $(shell pkg-config --cflags gtk+-3.0 sdl2)
 PKG_LIBS   = $(shell pkg-config --libs gtk+-3.0 sdl2)
 
-SRCS   = gensystray.c gensystray_utils.c gensystray_config_parser.c dlist.c
+SRCS   = gensystray.c gensystray_utils.c gensystray_config_parser.c gensystray_config_monitor.c dlist.c
 TARGET = gensystray
 
 ifdef DEBUG
