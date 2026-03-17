@@ -42,7 +42,7 @@ char *get_config_path(void)
 	home = getenv("HOME");
 	if(NULL == home) {
 		fprintf(stderr,"couldn't find home directory\n");
-		exit(NO_PRE_REQ);
+		return NULL;
 	}
 
 	// calculate the size of the path
@@ -96,21 +96,22 @@ struct sOption *get_config_option(FILE *stream)
 
 	if(EOF == ch) {
 		fprintf(stderr,"formating error, couldn't find command\n");
-		exit(FMT_CFG_ERROR);
+		free(name);
+		return NULL;
 	}
 
 	if(NOT_FOUND == optstart) {
 		fprintf(stderr,"formating error, couldn't find command\n");
 		free(name);
-		//FIXME: change to graceful degradation to be handle by main
-		exit(FMT_CFG_ERROR);
+		return NULL;
 	}
 
 	optend = fstrchr(stream, ftell(stream), '\n');
 
 	if(NOT_FOUND == optend) {
 		fprintf(stderr,"formanting error, couln't find command\n");
-		exit(FMT_CFG_ERROR);
+		free(name);
+		return NULL;
 	}
 
 	// +1 don't include the '\n' character in the command
