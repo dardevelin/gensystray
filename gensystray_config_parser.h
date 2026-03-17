@@ -1,7 +1,7 @@
 /*
  * gensystray_config_parser.h
  * This file is part of GenSysTray
- * Copyright (C) 2016  Darcy Bras da Silva
+ * Copyright (C) 2016 - 2026  Darcy Bras da Silva
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,6 +19,9 @@
 
 #ifndef _GENSYSTRAY_CFG_PARSER_H
 #define _GENSYSTRAY_CFG_PARSER_H
+
+#include <stdio.h>
+#include "dlist.h"
 
 /* our options from the configuration file consist of name
  * and a command associated with that name.
@@ -71,5 +74,21 @@ char *get_icon_path(FILE *stream);
  * re-sets the stream back to it's original position before returning
  */
 char *get_tooltip_text(FILE *cfg);
+
+/* holds all configuration state loaded from the config file */
+struct config {
+	char *config_path;
+	char *icon_path;
+	char *tooltip;
+	struct dlist_list *options;
+};
+
+/* allocates, populates and returns a struct config from the file at config_path.
+ * returns NULL on failure. caller must free with free_config.
+ */
+struct config *load_config(const char *config_path);
+
+/* frees all memory owned by config, including the struct itself */
+void free_config(struct config *config);
 
 #endif

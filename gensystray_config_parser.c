@@ -1,7 +1,7 @@
 /*
  * gensystray_config_parser.c
  * This file is part of GenSysTray
- * Copyright (C) 2016  Darcy Bras da Silva
+ * Copyright (C) 2016 - 2026  Darcy Bras da Silva
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -195,4 +195,72 @@ clean_exit:
 
 	fseek(stream, stream_pos, SEEK_SET);
 	return ttext;
+}
+
+static void option_dalloc(void *data)
+{
+	struct sOption *opt = (struct sOption *)data;
+	free(opt->name);
+	free(opt->command);
+	free(opt);
+}
+
+struct config *load_config(const char *config_path)
+{
+	FILE *cfg = NULL;
+	struct sOption *opt = NULL;
+
+	if(!config_path) {
+		fprintf(stderr, "load_config: config_path is NULL\n");
+		return NULL;
+	}
+
+	if(NULL == (cfg = fopen(config_path, "r"))) {
+		fprintf(stderr, "load_config: could not open config file\n");
+		return NULL;
+	}
+
+	struct config *config = malloc(sizeof(struct config));
+	if(!config) {
+		fprintf(stderr, "load_config: couldn't allocate config\n");
+		fclose(cfg);
+		return NULL;
+	}
+
+	config->config_path = sstrndup(config_path, strlen(config_path));
+	config->icon_path   = get_icon_path(cfg);
+	config->tooltip     = get_tooltip_text(cfg);
+	config->options     = dlist_list_new(NULL, NULL);
+
+	if(!config->options) {
+		fprintf(stderr, "load_config: couldn't allocate options list\n");
+		free_config(config);
+		fclose(cfg);
+		return NULL;
+	}
+
+	while(NULL != (opt = get_config_option(cfg))) {
+		dlist_node_push(config->options,
+				dlist_node_new(config->options, opt, option_dalloc));
+	}
+
+	fclose(cfg);
+	return config;
+}
+
+void free_config(struct config *config)
+{
+	if(!config)
+		return;
+
+	free(config->config_path);
+	free(config->icon_path);
+	free(config->tooltip);
+
+	if(config->options) {
+		dlist_list_delete_all_nodes(config->options);
+		dlist_list_delete(config->options);
+	}
+
+	free(config);
 }
