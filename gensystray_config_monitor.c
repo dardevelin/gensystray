@@ -21,53 +21,38 @@
 #include <stdlib.h>
 
 #include "gensystray_config_monitor.h"
-#include "gensystray_config_parser.h"
-
-static void option_dalloc(void *data)
-{
-	struct sOption *opt = (struct sOption *)data;
-	free(opt->name);
-	free(opt->command);
-	free(opt);
-}
 
 static void on_cfg_changed(GFileMonitor *monitor, GFile *file, GFile *other_file,
 			   GFileMonitorEvent event_type, gpointer user_data)
 {
-	GSList **optlist = (GSList **)user_data;
-	struct sOption *option = NULL;
-	char *cfg_path = NULL;
-	FILE *cfg = NULL;
+	struct config *config = (struct config *)user_data;
 
-	cfg_path = get_config_path();
-	if(!cfg_path) {
-		fprintf(stderr, "couldn't handle build cfg_path on changes\n");
+	struct config *updated = load_config(config->config_path);
+	if(!updated) {
+		fprintf(stderr, "on_cfg_changed: failed to reload config\n");
 		return;
 	}
 
-	if(NULL == (cfg = fopen(cfg_path, "r"))) {
-		fprintf(stderr, "could not load config file on change\n");
-		free(cfg_path);
-		return;
-	}
+	// swap the reloadable fields, free the old ones via free_config trick
+	GSList *old_options   = config->options;
+	char   *old_icon_path = config->icon_path;
+	char   *old_tooltip   = config->tooltip;
 
-	free(cfg_path);
+	config->options   = updated->options;
+	config->icon_path = updated->icon_path;
+	config->tooltip   = updated->tooltip;
 
-	g_slist_free_full(*optlist, option_dalloc);
-	*optlist = NULL;
+	// point updated at old data so free_config cleans it up
+	updated->options   = old_options;
+	updated->icon_path = old_icon_path;
+	updated->tooltip   = old_tooltip;
 
-	while(NULL != (option = get_config_option(cfg))) {
-		*optlist = g_slist_prepend(*optlist, option);
-	}
-
-	*optlist = g_slist_reverse(*optlist);
-
-	fclose(cfg);
+	free_config(updated);
 }
 
-GFileMonitor *monitor_config(const char *config_path, GSList **optlist)
+GFileMonitor *monitor_config(const char *config_path, struct config *config)
 {
-	if(!config_path || !optlist)
+	if(!config_path || !config)
 		return NULL;
 
 	GFile *cfg_gfile = g_file_new_for_path(config_path);
@@ -78,7 +63,7 @@ GFileMonitor *monitor_config(const char *config_path, GSList **optlist)
 		return NULL;
 
 	g_signal_connect(G_OBJECT(monitor), "changed",
-			 G_CALLBACK(on_cfg_changed), optlist);
+			 G_CALLBACK(on_cfg_changed), config);
 
 	return monitor;
 }

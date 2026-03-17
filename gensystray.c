@@ -37,12 +37,6 @@
 /* import config monitor for live config reloading */
 #include "gensystray_config_monitor.h"
 
-static void option_dalloc(void *data)
-{
-	free(((struct sOption*)data)->name);
-	free(((struct sOption*)data)->command);
-	free(data);
-}
 
 /* this function is an SDL_Thread task so that we can
  * se the execution of the menu_item in separation with
@@ -100,10 +94,10 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 {
 	GtkMenu *menu = (GtkMenu*)gtk_menu_new();
 
-	GSList *optlist = (GSList*)user_data;
+	struct config *config = (struct config*)user_data;
 
 	// for each option, add a button and create it
-	g_slist_foreach(optlist, gensystray_option_to_item, menu);
+	g_slist_foreach(config->options, gensystray_option_to_item, menu);
 
 	// add default exit button
 	GtkWidget *exit_item = NULL;
@@ -121,84 +115,53 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 }
 
 
+static GtkStatusIcon *init_tray(struct config *config)
+{
+	GtkStatusIcon *icon = NULL;
+
+	if(!config->icon_path) {
+		icon = gtk_status_icon_new_from_stock(GTK_STOCK_INFO);
+	} else {
+		icon = gtk_status_icon_new_from_file(config->icon_path);
+	}
+
+	if(config->tooltip)
+		gtk_status_icon_set_tooltip_text(icon, config->tooltip);
+
+	g_signal_connect(G_OBJECT(icon), "popup-menu",
+			 G_CALLBACK(gensystray_on_menu), config);
+
+	gtk_status_icon_set_visible(icon, TRUE);
+
+	return icon;
+}
+
 int main(int argc, char **argv)
 {
-	// we need to init SDL in order to use thread subsystem
-	SDL_Init(0);
-	// init gtk in order to use the tray icon system
 	gtk_init(&argc, &argv);
 
-	GSList *optlist = NULL;
-	struct sOption *option;
-	// we take the options from our configuration file
-	FILE *cfg = NULL;
 	char *cfg_path = get_config_path();
-	char *icon_path = NULL;
-	char *tooltip_text = "GenSysTray";
-	GtkStatusIcon *icon = NULL;
-	GFileMonitor *cfg_monitor = NULL;
-
 	if(!cfg_path) {
-		fprintf(stderr,"couldn't build cfg path\n");
+		fprintf(stderr, "couldn't build cfg path\n");
 		exit(MEMORY_ERROR);
 	}
-	// load_cfg
-	if( NULL ==  (cfg = fopen(cfg_path, "r")) ) {
-		//FIXME: use errno
-		//FIXME: create config file
+
+	struct config *config = load_config(cfg_path);
+	if(!config) {
 		fprintf(stderr, "could not load config file\n");
 		free(cfg_path);
 		exit(CFG_NOT_FOUND);
 	}
 
-	// monitor cfg for live changes
-	cfg_monitor = monitor_config(cfg_path, &optlist);
-
-
-	// clean up, we no longer need cfg_path
+	GFileMonitor *cfg_monitor = monitor_config(cfg_path, config);
 	free(cfg_path);
 
-	if(NULL == (icon_path = get_icon_path(cfg)) ) {
-		icon = gtk_status_icon_new_from_stock(GTK_STOCK_INFO);
-	} else {
-		icon = gtk_status_icon_new_from_file(icon_path);
-	}
+	init_tray(config);
 
-	// we no longer need icon_path clean it
-	free(icon_path);
-	icon_path = NULL;
-
-	// get option list
-	while(NULL != (option = get_config_option(cfg)) ) {
-		optlist = g_slist_prepend(optlist, option);
-	}
-	optlist = g_slist_reverse(optlist);
-
-	g_signal_connect(G_OBJECT(icon), "popup-menu",
-			 G_CALLBACK(gensystray_on_menu),
-			 optlist);
-
-	if(NULL != (tooltip_text = get_tooltip_text(cfg)) ) {
-		gtk_status_icon_set_tooltip_text(icon, tooltip_text);
-		// we no longer need tooltip_text
-		free(tooltip_text);
-	}
-	
-	// we no longer need cfg, close it
-	fclose(cfg);
-
-	gtk_status_icon_set_visible(icon, TRUE);
-
-	// execute our GenSysTray
 	gtk_main();
 
-	// the application is shutting down. clean up
-	g_slist_free_full(optlist, (GDestroyNotify)option_dalloc);
-	// clean cfg_monitor
+	free_config(config);
 	g_object_unref(cfg_monitor);
-
-	SDL_Quit();
-	
 
 	return 0;
 }
