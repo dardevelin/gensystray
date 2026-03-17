@@ -42,9 +42,6 @@
       "-I/opt/homebrew/Cellar/glib/2.86.4/lib/glib-2.0/include",
       "-I/opt/homebrew/opt/gettext/include",
       "-I/opt/homebrew/Cellar/pcre2/10.47_1/include",
-      "-I/opt/homebrew/include",
-      "-I/opt/homebrew/include/SDL2",
-      "-D_THREAD_SAFE",
       "-o",
       "gensystray",
       "gensystray.c"
@@ -95,9 +92,6 @@
       "-I/opt/homebrew/Cellar/glib/2.86.4/lib/glib-2.0/include",
       "-I/opt/homebrew/opt/gettext/include",
       "-I/opt/homebrew/Cellar/pcre2/10.47_1/include",
-      "-I/opt/homebrew/include",
-      "-I/opt/homebrew/include/SDL2",
-      "-D_THREAD_SAFE",
       "-o",
       "gensystray",
       "gensystray_utils.c"
@@ -148,9 +142,6 @@
       "-I/opt/homebrew/Cellar/glib/2.86.4/lib/glib-2.0/include",
       "-I/opt/homebrew/opt/gettext/include",
       "-I/opt/homebrew/Cellar/pcre2/10.47_1/include",
-      "-I/opt/homebrew/include",
-      "-I/opt/homebrew/include/SDL2",
-      "-D_THREAD_SAFE",
       "-o",
       "gensystray",
       "gensystray_config_parser.c"
@@ -201,9 +192,6 @@
       "-I/opt/homebrew/Cellar/glib/2.86.4/lib/glib-2.0/include",
       "-I/opt/homebrew/opt/gettext/include",
       "-I/opt/homebrew/Cellar/pcre2/10.47_1/include",
-      "-I/opt/homebrew/include",
-      "-I/opt/homebrew/include/SDL2",
-      "-D_THREAD_SAFE",
       "-o",
       "gensystray",
       "gensystray_config_monitor.c"

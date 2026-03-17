@@ -24,10 +24,6 @@
 /* we use gtk for our tray icon system */
 #include <gtk/gtk.h>
 
-/* easy to use portable threads */
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_thread.h>
-
 /* import our configuration routines  */
 #include "gensystray_config_parser.h"
 
@@ -38,26 +34,14 @@
 #include "gensystray_config_monitor.h"
 
 
-/* this function is an SDL_Thread task so that we can
- * se the execution of the menu_item in separation with
- * the rest of the program execution
- */
-int sdl_task(void *data)
-{
-	system(data);
-
-	return 0;
-}
-
-/* this function is a valid signature to the "activate" signal 
- * that gtk expects. it is intended to delegate to a SDL_thread
- * which will execute on it's own the command
+/* this function is a valid signature to the "activate" signal
+ * that gtk expects. it spawns the command in a child process
+ * using the shell, keeping the ui responsive
  */
 void delegate_system_call(GtkWidget *widget, gpointer user_data)
 {
-	SDL_Thread *thread;
-	thread = SDL_CreateThread(sdl_task, "sdl_task", user_data);
-	SDL_DetachThread(thread);
+	char *argv[] = { "sh", "-c", (char *)user_data, NULL };
+	g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL);
 }
 
 /* this function is a valid GFunc signature for g_slist_foreach
