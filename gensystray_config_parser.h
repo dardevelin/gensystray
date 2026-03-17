@@ -21,7 +21,7 @@
 #define _GENSYSTRAY_CFG_PARSER_H
 
 #include <stdio.h>
-#include "dlist.h"
+#include <glib.h>
 
 /* our options from the configuration file consist of name
  * and a command associated with that name.
@@ -80,7 +80,7 @@ struct config {
 	char *config_path;
 	char *icon_path;
 	char *tooltip;
-	struct dlist_list *options;
+	GSList *options;
 };
 
 /* allocates, populates and returns a struct config from the file at config_path.

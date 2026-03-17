@@ -34,7 +34,7 @@ static void option_dalloc(void *data)
 static void on_cfg_changed(GFileMonitor *monitor, GFile *file, GFile *other_file,
 			   GFileMonitorEvent event_type, gpointer user_data)
 {
-	struct dlist_list *optlist = (struct dlist_list *)user_data;
+	GSList **optlist = (GSList **)user_data;
 	struct sOption *option = NULL;
 	char *cfg_path = NULL;
 	FILE *cfg = NULL;
@@ -53,17 +53,19 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file, GFile *other_file
 
 	free(cfg_path);
 
-	dlist_list_delete_all_nodes(optlist);
+	g_slist_free_full(*optlist, option_dalloc);
+	*optlist = NULL;
 
 	while(NULL != (option = get_config_option(cfg))) {
-		dlist_node_push(optlist,
-				dlist_node_new(optlist, option, option_dalloc));
+		*optlist = g_slist_prepend(*optlist, option);
 	}
+
+	*optlist = g_slist_reverse(*optlist);
 
 	fclose(cfg);
 }
 
-GFileMonitor *monitor_config(const char *config_path, struct dlist_list *optlist)
+GFileMonitor *monitor_config(const char *config_path, GSList **optlist)
 {
 	if(!config_path || !optlist)
 		return NULL;

@@ -21,13 +21,13 @@
 #define _GENSYSTRAY_CFG_MONITOR_H
 
 #include <gio/gio.h>
-#include "dlist.h"
+#include <glib.h>
 
 /* sets up a GFileMonitor on config_path and wires on_cfg_changed.
- * optlist is passed as user_data to the changed signal.
+ * optlist is a pointer to a GSList* that on_cfg_changed will update in place.
  * returns the GFileMonitor — caller must g_object_unref when done.
  * returns NULL on failure.
  */
-GFileMonitor *monitor_config(const char *config_path, struct dlist_list *optlist);
+GFileMonitor *monitor_config(const char *config_path, GSList **optlist);
 
 #endif

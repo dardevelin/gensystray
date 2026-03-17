@@ -28,9 +28,6 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_thread.h>
 
-/* import our doubly linked data structure */
-#include "dlist.h"
-
 /* import our configuration routines  */
 #include "gensystray_config_parser.h"
 
@@ -40,10 +37,7 @@
 /* import config monitor for live config reloading */
 #include "gensystray_config_monitor.h"
 
-/* this function allows easy management of optlist clean up
- * by acting as valid signature to dlist_node_foreach
- */
-void option_dalloc(void *data)
+static void option_dalloc(void *data)
 {
 	free(((struct sOption*)data)->name);
 	free(((struct sOption*)data)->command);
@@ -72,13 +66,10 @@ void delegate_system_call(GtkWidget *widget, gpointer user_data)
 	SDL_DetachThread(thread);
 }
 
-/* this functions is a valid signature to dlist_node_foreach
- * it is intended to assist gensystray_on_menu by generating
- * a button for each option in optlist/user_data and associating
- * the respective signals to the buttons as well as the buttons
- * to the menu itself
+/* this function is a valid GFunc signature for g_slist_foreach
+ * it generates a menu item for each option and appends it to the menu
  */
-void *gensystray_option_to_item(void *carry, void *data, void *param)
+void gensystray_option_to_item(gpointer data, gpointer param)
 {
 	GtkMenu *menu = (GtkMenu*)param;
 	struct sOption *option = (struct sOption*)data;
@@ -100,7 +91,6 @@ void *gensystray_option_to_item(void *carry, void *data, void *param)
 
 	// make them visible
 	gtk_widget_show_all(GTK_WIDGET(menu));
-	return NULL;
 }
 
 /* this functions is creates our popup-menu when it's pressed
@@ -109,11 +99,11 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 			guint activate_time, gpointer user_data)
 {
 	GtkMenu *menu = (GtkMenu*)gtk_menu_new();
-	
-	struct dlist_list *optlist = (struct dlist_list*)user_data;
+
+	GSList *optlist = (GSList*)user_data;
 
 	// for each option, add a button and create it
-	dlist_node_foreach(optlist, gensystray_option_to_item, menu);
+	g_slist_foreach(optlist, gensystray_option_to_item, menu);
 
 	// add default exit button
 	GtkWidget *exit_item = NULL;
@@ -138,10 +128,7 @@ int main(int argc, char **argv)
 	// init gtk in order to use the tray icon system
 	gtk_init(&argc, &argv);
 
-	// we use a dlist to store our list of options to be presented
-	// in our tray icon popup-menu
-
-	struct dlist_list optlist;
+	GSList *optlist = NULL;
 	struct sOption *option;
 	// we take the options from our configuration file
 	FILE *cfg = NULL;
@@ -150,9 +137,6 @@ int main(int argc, char **argv)
 	char *tooltip_text = "GenSysTray";
 	GtkStatusIcon *icon = NULL;
 	GFileMonitor *cfg_monitor = NULL;
-
-	// prepare list so it can be used
-	dlist_init(&optlist, NULL, NULL);
 
 	if(!cfg_path) {
 		fprintf(stderr,"couldn't build cfg path\n");
@@ -170,6 +154,7 @@ int main(int argc, char **argv)
 	// monitor cfg for live changes
 	cfg_monitor = monitor_config(cfg_path, &optlist);
 
+
 	// clean up, we no longer need cfg_path
 	free(cfg_path);
 
@@ -185,15 +170,13 @@ int main(int argc, char **argv)
 
 	// get option list
 	while(NULL != (option = get_config_option(cfg)) ) {
-		dlist_node_push(&optlist,
-				dlist_node_new(&optlist,
-					       option,
-					       option_dalloc));
+		optlist = g_slist_prepend(optlist, option);
 	}
+	optlist = g_slist_reverse(optlist);
 
 	g_signal_connect(G_OBJECT(icon), "popup-menu",
 			 G_CALLBACK(gensystray_on_menu),
-			 &optlist);
+			 optlist);
 
 	if(NULL != (tooltip_text = get_tooltip_text(cfg)) ) {
 		gtk_status_icon_set_tooltip_text(icon, tooltip_text);
@@ -210,7 +193,7 @@ int main(int argc, char **argv)
 	gtk_main();
 
 	// the application is shutting down. clean up
-	dlist_list_delete_all_nodes(&optlist);
+	g_slist_free_full(optlist, (GDestroyNotify)option_dalloc);
 	// clean cfg_monitor
 	g_object_unref(cfg_monitor);
 

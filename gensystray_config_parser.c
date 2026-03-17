@@ -230,19 +230,13 @@ struct config *load_config(const char *config_path)
 	config->config_path = sstrndup(config_path, strlen(config_path));
 	config->icon_path   = get_icon_path(cfg);
 	config->tooltip     = get_tooltip_text(cfg);
-	config->options     = dlist_list_new(NULL, NULL);
-
-	if(!config->options) {
-		fprintf(stderr, "load_config: couldn't allocate options list\n");
-		free_config(config);
-		fclose(cfg);
-		return NULL;
-	}
+	config->options = NULL;
 
 	while(NULL != (opt = get_config_option(cfg))) {
-		dlist_node_push(config->options,
-				dlist_node_new(config->options, opt, option_dalloc));
+		config->options = g_slist_prepend(config->options, opt);
 	}
+
+	config->options = g_slist_reverse(config->options);
 
 	fclose(cfg);
 	return config;
@@ -257,10 +251,7 @@ void free_config(struct config *config)
 	free(config->icon_path);
 	free(config->tooltip);
 
-	if(config->options) {
-		dlist_list_delete_all_nodes(config->options);
-		dlist_list_delete(config->options);
-	}
+	g_slist_free_full(config->options, option_dalloc);
 
 	free(config);
 }
