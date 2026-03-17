@@ -50,7 +50,7 @@ void delegate_system_call(GtkWidget *widget, gpointer user_data)
 void gensystray_option_to_item(gpointer data, gpointer param)
 {
 	GtkMenu *menu = (GtkMenu*)param;
-	struct sOption *option = (struct sOption*)data;
+	struct option *option = (struct option*)data;
 	GtkWidget *menu_item = NULL;
 
 	if('-' == option->name[0] && '-' == option->command[0]) {

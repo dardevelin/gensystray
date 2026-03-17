@@ -62,7 +62,7 @@ char *get_config_path(void)
 	return path;
 }
 
-struct sOption *get_config_option(FILE *stream)
+struct option *get_config_option(FILE *stream)
 {
 	//find option
 	long optstart = 0;
@@ -123,7 +123,7 @@ struct sOption *get_config_option(FILE *stream)
 		return NULL;
 	}
 
-	struct sOption *option = malloc(sizeof(struct sOption));
+	struct option *option = malloc(sizeof(struct option));
 
 	if(!option) {
 		fprintf(stderr,"couldn't allocate memory for option structure\n");
@@ -199,7 +199,7 @@ clean_exit:
 
 static void option_dalloc(void *data)
 {
-	struct sOption *opt = (struct sOption *)data;
+	struct option *opt = (struct option *)data;
 	free(opt->name);
 	free(opt->command);
 	free(opt);
@@ -208,7 +208,7 @@ static void option_dalloc(void *data)
 struct config *load_config(const char *config_path)
 {
 	FILE *cfg = NULL;
-	struct sOption *opt = NULL;
+	struct option *opt = NULL;
 
 	if(!config_path) {
 		fprintf(stderr, "load_config: config_path is NULL\n");

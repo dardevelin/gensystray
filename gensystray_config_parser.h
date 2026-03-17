@@ -28,7 +28,7 @@
  * we use this struct to keep this proximity relation clear
  * through out the code
  */
-struct sOption {
+struct option {
 	char *name;
 	char *command;
 };
@@ -49,9 +49,9 @@ char *get_config_path(void);
  * returns NULL if no EOF is reached
  *
  * this function changes the position in the stream and does not rewind it.
- * the return struct sOption needs to be freed along with it's data members
+ * the return struct option needs to be freed along with it's data members
  */
-struct sOption *get_config_option(FILE *stream);
+struct option *get_config_option(FILE *stream);
 
 /* this function takes a FILE pointer to stream which is expected
  * to be open. saves it's current position, rewinds it and searches
