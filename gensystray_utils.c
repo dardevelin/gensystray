@@ -1,7 +1,7 @@
 /*
  * gensystray_utils.c
  * This file is part of GenSysTray
- * Copyright (C) 2016  Darcy Bras da Silva
+ * Copyright (C) 2016 - 2026  Darcy Bras da Silva
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

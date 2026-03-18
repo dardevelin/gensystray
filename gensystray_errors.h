@@ -1,7 +1,7 @@
 /*
  * gensystray_errors.h
  * This file is part of GenSysTray
- * Copyright (C) 2016  Darcy Bras da Silva
+ * Copyright (C) 2016 - 2026  Darcy Bras da Silva
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,9 +24,5 @@
 #define NOT_FOUND -1
 #define OPT_NOT_FOUND -2
 #define CFG_NOT_FOUND -3
-#define FMT_CFG_ERROR -4
-
-// used when the host doesn't meet the requisits to run the program
-#define NO_PRE_REQ -42
 
 #endif
