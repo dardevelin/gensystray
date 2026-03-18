@@ -20,7 +20,15 @@
 #define _GENSYSTRAY_CFG_PARSER_H
 
 #include <stdio.h>
+#include <stdbool.h>
 #include <glib.h>
+
+typedef enum {
+	SEPARATORS_BOTH,   /* true — separator above and below (default) */
+	SEPARATORS_TOP,    /* separator above only */
+	SEPARATORS_BOTTOM, /* separator below only */
+	SEPARATORS_NONE,   /* no separators */
+} section_separators;
 
 /* our options from the configuration file consist of name
  * and a command associated with that name.
@@ -31,6 +39,48 @@ struct option {
 	char *name;
 	char *command;
 	int   order;    /* -1 = unordered (declaration order) */
+};
+
+/* context passed to GFileMonitor callbacks for glob populate sources.
+ * freed automatically via g_object_set_data_full when the monitor is unreffed.
+ */
+struct monitor_ctx {
+	struct section  *sec;
+	struct config   *config;
+	struct populate *pop;
+};
+
+/* a populate block describes a dynamic source for section items.
+ * from = "glob": pattern is a glob e.g. ~/notes/\*.md, label_tpl and command_tpl
+ * use {filename} and {filepath} substitution tokens.
+ * watch = true: a GFileMonitor watches the directory and re-expands on change.
+ */
+struct populate {
+	char  *from;        /* source type: "glob", others TBD */
+	char  *pattern;     /* glob pattern, ~ expanded at runtime */
+	char  *label_tpl;   /* item label template, e.g. "{filename}" */
+	char  *command_tpl; /* item command template, e.g. "nvim {filepath}" */
+	bool   watch;       /* true = monitor directory for changes */
+	int    depth;       /* 0 = current dir only, N = N levels, -1 = unlimited */
+	bool   hierarchy;   /* true = subdirs become submenus, false = flat list */
+};
+
+/* a section is a named submenu containing a list of options.
+ * label == NULL means an anonymous (flat) section — top-level items.
+ * ordering among sections follows the same rules as options:
+ * explicit order first, then declaration order.
+ * items within a named section are sorted alphabetically by label.
+ * items within an anonymous section follow declaration order.
+ */
+struct section {
+	char   *label;          /* NULL = anonymous/flat */
+	GSList *options;        /* expanded struct option list */
+	GSList *populates;      /* struct populate list for dynamic sources */
+	GSList *monitors;       /* GFileMonitor* list for watched sources */
+	int     order;          /* -1 = unordered (declaration order) */
+	bool    expanded;       /* false = submenu (default), true = inline */
+	bool               show_label;  /* true = show name as header (default) */
+	section_separators separators;  /* controls top/bottom separator rendering */
 };
 
 /* this function returns a new string with the path to the configuration
@@ -48,8 +98,8 @@ struct config {
 	char *name;       /* instance name, NULL in single-instance mode */
 	char *icon_path;
 	char *tooltip;
-	GSList *options;
-	void *tray_icon; /* GtkStatusIcon *, kept alive here */
+	GSList *sections; /* ordered list of struct section */
+	void *tray_icon;  /* GtkStatusIcon *, kept alive here */
 	void *menu;      /* GtkMenu *, currently open menu or NULL */
 };
 

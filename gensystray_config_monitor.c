@@ -33,16 +33,16 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file, GFile *other_file
 	struct config *updated = (struct config *)updated_list->data;
 
 	// swap the reloadable fields, free the old ones via free_config trick
-	GSList *old_options   = config->options;
+	GSList *old_sections  = config->sections;
 	char   *old_icon_path = config->icon_path;
 	char   *old_tooltip   = config->tooltip;
 
-	config->options   = updated->options;
+	config->sections  = updated->sections;
 	config->icon_path = updated->icon_path;
 	config->tooltip   = updated->tooltip;
 
 	// point updated at old data so free_config cleans it up
-	updated->options   = old_options;
+	updated->sections  = old_sections;
 	updated->icon_path = old_icon_path;
 	updated->tooltip   = old_tooltip;
 
