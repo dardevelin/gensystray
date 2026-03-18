@@ -1,5 +1,5 @@
 CC      = gcc
-CFLAGS  = -Wall -Werror -std=gnu11 -Wno-deprecated-declarations
+CFLAGS  = -Wall -Werror -std=gnu11 -Wno-deprecated-declarations -DVERSION=\"2.0.0\"
 LDFLAGS =
 
 PKG_CFLAGS = $(shell pkg-config --cflags gtk+-3.0)

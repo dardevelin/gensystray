@@ -1,2 +1,4 @@
 *.o
 gensystray
+.cache/
+*.dSYM/
