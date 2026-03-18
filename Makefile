@@ -34,7 +34,13 @@ $(UCL_DIR)/src/%.o: $(UCL_DIR)/src/%.c
 $(TARGET): $(SRCS) $(UCL_OBJS)
 	$(CC) $(CFLAGS) $(PKG_CFLAGS) $(UCL_INC) -o $@ $^ $(LDFLAGS) $(PKG_LIBS) -lm
 
+init:
+	git submodule update --init --recursive
+
+run: $(TARGET)
+	./$(TARGET)
+
 clean:
 	rm -f $(TARGET) $(UCL_OBJS)
 
-.PHONY: clean
+.PHONY: init run clean
