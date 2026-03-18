@@ -49,14 +49,21 @@ struct config {
 	char *icon_path;
 	char *tooltip;
 	GSList *options;
+	void *tray_icon; /* GtkStatusIcon *, kept alive here */
+	void *menu;      /* GtkMenu *, currently open menu or NULL */
 };
 
-/* allocates, populates and returns a struct config from the file at config_path.
- * returns NULL on failure. caller must free with free_config.
+/* allocates, populates and returns a GSList of struct config from config_path.
+ * single instance config returns a list of one.
+ * multi instance config (instance blocks) returns one entry per instance.
+ * returns NULL on failure. caller must free with free_configs.
  */
-struct config *load_config(const char *config_path);
+GSList *load_config(const char *config_path);
 
-/* frees all memory owned by config, including the struct itself */
+/* frees all memory owned by a single config, including the struct itself */
 void free_config(struct config *config);
+
+/* frees the full list returned by load_config */
+void free_configs(GSList *configs);
 
 #endif

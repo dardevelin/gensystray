@@ -30,6 +30,30 @@
 /* import config monitor for live config reloading */
 #include "gensystray_config_monitor.h"
 
+/* macOS global event monitor for menu dismissal */
+#include "gensystray_osx_menu.h"
+
+
+static GSList *all_configs = NULL;
+
+static void popdown_all_menus(void) {
+	for(GSList *l = all_configs; l; l = l->next) {
+		struct config *c = (struct config *)l->data;
+		if(c->menu) {
+			gtk_menu_popdown(GTK_MENU(c->menu));
+			c->menu = NULL;
+		}
+	}
+}
+
+static void check_all_exited(void) {
+	for(GSList *l = all_configs; l; l = l->next) {
+		struct config *c = (struct config *)l->data;
+		if(c->tray_icon)
+			return;
+	}
+	gtk_main_quit();
+}
 
 /* this function is a valid signature to the "activate" signal
  * that gtk expects. it spawns the command in a child process
@@ -66,30 +90,47 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 	gtk_widget_show_all(GTK_WIDGET(menu));
 }
 
-/* this functions is creates our popup-menu when it's pressed
+static void destroy_instance(GtkWidget *widget, gpointer user_data) {
+	struct config *config = (struct config *)user_data;
+	gtk_status_icon_set_visible(GTK_STATUS_ICON(config->tray_icon), FALSE);
+	g_object_unref(config->tray_icon);
+	config->tray_icon = NULL;
+	config->menu = NULL;
+	check_all_exited();
+}
+
+/* this function creates our popup-menu when it's pressed
  */
 void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 			guint activate_time, gpointer user_data) {
-	GtkMenu *menu = (GtkMenu*)gtk_menu_new();
-
 	struct config *config = (struct config*)user_data;
 
-	// for each option, add a button and create it
+	// dismiss all open menus before opening a new one
+	popdown_all_menus();
+
+	GtkMenu *menu = (GtkMenu*)gtk_menu_new();
+	config->menu = menu;
+
 	g_slist_foreach(config->options, gensystray_option_to_item, menu);
 
-	// add default exit button
-	GtkWidget *exit_item = NULL;
-	exit_item = gtk_menu_item_new_with_label("exit");
+	// exit closes only this instance
+	GtkWidget *exit_item = gtk_menu_item_new_with_label("exit");
 	g_signal_connect(G_OBJECT(exit_item), "activate",
-			 G_CALLBACK(gtk_main_quit),
-			 NULL);
+			 G_CALLBACK(destroy_instance), config);
+	gtk_menu_shell_append((GtkMenuShell*)menu, exit_item);
 
-	gtk_menu_shell_prepend((GtkMenuShell*)menu, exit_item);
 	gtk_widget_show_all(GTK_WIDGET(menu));
-	
-	// show the menu
-	gtk_menu_popup((GtkMenu*)menu, NULL, NULL, NULL, NULL,
+
+	g_signal_connect_swapped(G_OBJECT(menu), "deactivate",
+				 G_CALLBACK(g_nullify_pointer), &config->menu);
+	g_signal_connect_swapped(G_OBJECT(menu), "deactivate",
+				 G_CALLBACK(osx_menu_unwatch), menu);
+
+	gtk_menu_popup((GtkMenu*)menu, NULL, NULL,
+		       gtk_status_icon_position_menu, icon,
 		       button, activate_time);
+
+	osx_menu_watch(menu, popdown_all_menus);
 }
 
 
@@ -110,6 +151,7 @@ static GtkStatusIcon *init_tray(struct config *config) {
 
 	gtk_status_icon_set_visible(icon, TRUE);
 
+	config->tray_icon = icon;
 	return icon;
 }
 
@@ -122,21 +164,26 @@ int main(int argc, char **argv) {
 		exit(EXIT_FAILURE);
 	}
 
-	struct config *config = load_config(cfg_path);
-	if(!config) {
+	all_configs = load_config(cfg_path);
+	if(!all_configs) {
 		fprintf(stderr, "could not load config file\n");
 		free(cfg_path);
 		exit(EXIT_FAILURE);
 	}
 
-	GFileMonitor *cfg_monitor = monitor_config(cfg_path, config);
+	GFileMonitor *cfg_monitor = monitor_config(cfg_path, (struct config *)all_configs->data);
 	free(cfg_path);
 
-	init_tray(config);
+	g_slist_foreach(all_configs, (GFunc)init_tray, NULL);
 
 	gtk_main();
 
-	free_config(config);
+	for(GSList *l = all_configs; l; l = l->next) {
+		struct config *c = (struct config *)l->data;
+		if(c->tray_icon)
+			g_object_unref(c->tray_icon);
+	}
+	free_configs(all_configs);
 	g_object_unref(cfg_monitor);
 
 	return 0;

@@ -5,8 +5,9 @@ LDFLAGS =
 PKG_CFLAGS = $(shell pkg-config --cflags gtk+-3.0)
 PKG_LIBS   = $(shell pkg-config --libs gtk+-3.0)
 
-SRCS   = gensystray.c gensystray_config_parser.c gensystray_config_monitor.c
-TARGET = gensystray
+SRCS    = gensystray.c gensystray_config_parser.c gensystray_config_monitor.c
+TARGET  = gensystray
+OSX_OBJ = gensystray_osx_menu.o
 
 # libucl (built from submodule sources, no install needed)
 UCL_DIR    = deps/libucl
@@ -28,11 +29,15 @@ else
   CFLAGS += -O2
 endif
 
+$(TARGET): $(SRCS) $(OSX_OBJ) $(UCL_OBJS)
+	$(CC) $(CFLAGS) $(PKG_CFLAGS) $(UCL_INC) -o $@ $^ $(LDFLAGS) $(PKG_LIBS) -lm \
+		-Wl,-framework,Cocoa
+
+$(OSX_OBJ): gensystray_osx_menu.m
+	clang -fobjc-arc $(PKG_CFLAGS) -c -o $@ $<
+
 $(UCL_DIR)/src/%.o: $(UCL_DIR)/src/%.c
 	$(CC) $(UCL_CFLAGS) -c -o $@ $<
-
-$(TARGET): $(SRCS) $(UCL_OBJS)
-	$(CC) $(CFLAGS) $(PKG_CFLAGS) $(UCL_INC) -o $@ $^ $(LDFLAGS) $(PKG_LIBS) -lm
 
 init:
 	git submodule update --init --recursive
@@ -41,6 +46,6 @@ run: $(TARGET)
 	./$(TARGET)
 
 clean:
-	rm -f $(TARGET) $(UCL_OBJS)
+	rm -f $(TARGET) $(OSX_OBJ) $(UCL_OBJS)
 
 .PHONY: init run clean

@@ -79,11 +79,14 @@ static GSList *parse_items(const ucl_object_t *scope) {
 		if(strcmp(ucl_object_key(cur), "item") != 0)
 			continue;
 
-		// iterate implicit array of "item" blocks with expand_values=true
-		// so each element has the block label as its key ("New Button 1" etc)
+		// two-level iteration: expand=false to get each array element,
+		// then expand=true on each element to get the named block key
 		ucl_object_iter_t iit = NULL;
+		const ucl_object_t *elem;
+		for(; NULL != (elem = ucl_iterate_object(cur, &iit, false)); ) {
+		ucl_object_iter_t iiit = NULL;
 		const ucl_object_t *item;
-		for(; NULL != (item = ucl_iterate_object(cur, &iit, true)); ) {
+		for(; NULL != (item = ucl_iterate_object(elem, &iiit, true)); ) {
 			struct option *opt = malloc(sizeof(struct option));
 			if(!opt) {
 				fprintf(stderr, "couldn't allocate option\n");
@@ -120,6 +123,7 @@ static GSList *parse_items(const ucl_object_t *scope) {
 			}
 
 		}
+		}
 	}
 
 	ucl_object_iterate_free(it);
@@ -143,6 +147,8 @@ static struct config *parse_scope(const char *config_path, const ucl_object_t *s
 	config->icon_path   = NULL;
 	config->tooltip     = NULL;
 	config->options     = NULL;
+	config->tray_icon   = NULL;
+	config->menu        = NULL;
 
 	const ucl_object_t *tray = ucl_object_lookup(scope, "tray");
 	if(tray) {
@@ -160,7 +166,7 @@ static struct config *parse_scope(const char *config_path, const ucl_object_t *s
 	return config;
 }
 
-struct config *load_config(const char *config_path) {
+GSList *load_config(const char *config_path) {
 	if(!config_path) {
 		fprintf(stderr, "load_config: config_path is NULL\n");
 		return NULL;
@@ -185,12 +191,43 @@ struct config *load_config(const char *config_path) {
 		return NULL;
 	}
 
-	struct config *config = parse_scope(config_path, root);
+	GSList *configs = NULL;
+
+	// single instance: top-level tray block present
+	if(ucl_object_lookup(root, "tray")) {
+		struct config *config = parse_scope(config_path, root);
+		if(config)
+			configs = g_slist_append(configs, config);
+	} else {
+		// multi instance: iterate instance blocks
+		ucl_object_iter_t it = ucl_object_iterate_new(root);
+		const ucl_object_t *cur;
+		for(; NULL != (cur = ucl_object_iterate_safe(it, true)); ) {
+			if(strcmp(ucl_object_key(cur), "instance") != 0)
+				continue;
+			ucl_object_iter_t iit = NULL;
+			const ucl_object_t *elem;
+			for(; NULL != (elem = ucl_iterate_object(cur, &iit, false)); ) {
+				ucl_object_iter_t iiit = NULL;
+				const ucl_object_t *inst;
+				for(; NULL != (inst = ucl_iterate_object(elem, &iiit, true)); ) {
+					struct config *config = parse_scope(config_path, inst);
+					if(config)
+						configs = g_slist_append(configs, config);
+				}
+			}
+		}
+		ucl_object_iterate_free(it);
+	}
 
 	ucl_object_unref((ucl_object_t *)root);
 	ucl_parser_free(parser);
 
-	return config;
+	return configs;
+}
+
+void free_configs(GSList *configs) {
+	g_slist_free_full(configs, (GDestroyNotify)free_config);
 }
 
 void free_config(struct config *config) {

@@ -26,11 +26,12 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file, GFile *other_file
 			   GFileMonitorEvent event_type, gpointer user_data) {
 	struct config *config = (struct config *)user_data;
 
-	struct config *updated = load_config(config->config_path);
-	if(!updated) {
+	GSList *updated_list = load_config(config->config_path);
+	if(!updated_list) {
 		fprintf(stderr, "on_cfg_changed: failed to reload config\n");
 		return;
 	}
+	struct config *updated = (struct config *)updated_list->data;
 
 	// swap the reloadable fields, free the old ones via free_config trick
 	GSList *old_options   = config->options;
@@ -46,7 +47,7 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file, GFile *other_file
 	updated->icon_path = old_icon_path;
 	updated->tooltip   = old_tooltip;
 
-	free_config(updated);
+	free_configs(updated_list);
 }
 
 GFileMonitor *monitor_config(const char *config_path, struct config *config) {
