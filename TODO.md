@@ -2,7 +2,42 @@
 
 ## Config format (locked)
 
-The 2.0 config format is HCL. The following structure is locked:
+The 2.0 config format is UCL (superset of HCL). Parsed with libucl.
+
+### Instance mode (locked)
+
+Two modes, mutually exclusive. Mixing is a parse error.
+
+**Single instance** — no `instance` blocks, everything at top level:
+```hcl
+tray { icon = "/path/icon.png" }
+item "Terminal" { command = ["xterm"] }
+```
+
+**Multi instance** — all config inside named `instance` blocks, nothing outside:
+```hcl
+instance "work" {
+  tray { icon = "/path/work.png" }
+  item "Terminal" { command = ["xterm"] }
+  ipc { socket = "/run/user/1000/gensystray-work.sock" }
+}
+
+instance "personal" {
+  tray { icon = "/path/personal.png" }
+  item "Music" { command = ["spotify"] }
+  ipc { socket = "/run/user/1000/gensystray-personal.sock" }
+}
+```
+
+- `gensystray` starts all instances
+- `gensystray --instance work` starts only that instance
+- file monitor reloads all instances on change
+
+### Item ordering (locked)
+
+1. Items with `order` come first, sorted by `order` value (ascending)
+2. Items without `order` follow in declaration order
+3. Separators are items and follow the same ordering rules
 
 ```hcl
 tray {
@@ -12,6 +47,21 @@ tray {
 
 item "Terminal" {
   command = ["xterm"]
+}
+
+item "separator" {
+  separator = true
+  order     = 2
+}
+
+item "Browser" {
+  command = ["firefox"]
+  order   = 1
+}
+
+item "Editor" {
+  command = ["nvim"]
+  order   = 3
 }
 
 item "CPU" {
