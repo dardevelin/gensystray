@@ -30,12 +30,19 @@
 /* import config monitor for live config reloading */
 #include "gensystray_config_monitor.h"
 
-/* macOS global event monitor for menu dismissal */
+/* macOS global event monitor for menu dismissal outside GTK windows */
 #include "gensystray_osx_menu.h"
 
 
+/* global list of all loaded instances — used by popdown_all_menus and
+ * check_all_exited to coordinate across instances without passing state
+ * through signal callbacks
+ */
 static GSList *all_configs = NULL;
 
+/* dismiss every open instance menu. called when any tray icon is clicked
+ * or when a click outside all GTK windows is detected by the osx monitor
+ */
 static void popdown_all_menus(void) {
 	for(GSList *l = all_configs; l; l = l->next) {
 		struct config *c = (struct config *)l->data;
@@ -46,6 +53,9 @@ static void popdown_all_menus(void) {
 	}
 }
 
+/* called after each instance exits. if no instances have a tray icon
+ * remaining, quit the gtk main loop and let the process exit cleanly
+ */
 static void check_all_exited(void) {
 	for(GSList *l = all_configs; l; l = l->next) {
 		struct config *c = (struct config *)l->data;
@@ -55,17 +65,17 @@ static void check_all_exited(void) {
 	gtk_main_quit();
 }
 
-/* this function is a valid signature to the "activate" signal
- * that gtk expects. it spawns the command in a child process
- * using the shell, keeping the ui responsive
+/* valid "activate" signal callback. spawns the associated command in a
+ * child process via sh -c, keeping the ui responsive
  */
 void delegate_system_call(GtkWidget *widget, gpointer user_data) {
 	char *argv[] = { "sh", "-c", (char *)user_data, NULL };
 	g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL);
 }
 
-/* this function is a valid GFunc signature for g_slist_foreach
- * it generates a menu item for each option and appends it to the menu
+/* valid GFunc signature for g_slist_foreach. builds one GtkMenuItem per
+ * option and appends it to the menu. separators are detected by the "--"
+ * convention on both name and command fields
  */
 void gensystray_option_to_item(gpointer data, gpointer param) {
 	GtkMenu *menu = (GtkMenu*)param;
@@ -75,21 +85,19 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 	if('-' == option->name[0] && '-' == option->command[0]) {
 		menu_item = gtk_separator_menu_item_new();
 	} else {
-
 		menu_item = gtk_menu_item_new_with_label(option->name);
-
 		g_signal_connect(G_OBJECT(menu_item), "activate",
 				 G_CALLBACK(delegate_system_call),
 				 option->command);
 	}
 
-	// associate the button/item to the menu
 	gtk_menu_shell_append((GtkMenuShell*)menu, menu_item);
-
-	// make them visible
 	gtk_widget_show_all(GTK_WIDGET(menu));
 }
 
+/* hides and releases the tray icon for this instance, then checks if all
+ * instances have exited. connected to the "exit" menu item per instance
+ */
 static void destroy_instance(GtkWidget *widget, gpointer user_data) {
 	struct config *config = (struct config *)user_data;
 	gtk_status_icon_set_visible(GTK_STATUS_ICON(config->tray_icon), FALSE);
@@ -99,13 +107,21 @@ static void destroy_instance(GtkWidget *widget, gpointer user_data) {
 	check_all_exited();
 }
 
-/* this function creates our popup-menu when it's pressed
+/* popup-menu signal callback. dismisses all open menus first (handles the
+ * case where another instance's menu is open), then builds and shows a new
+ * menu for this instance.
+ *
+ * the deactivate signal is used to:
+ *   - clear config->menu so we don't hold a stale pointer
+ *   - uninstall the osx global event monitor
+ *
+ * the osx monitor is installed after popup so any outside click triggers
+ * popdown_all_menus, which also covers clicking between instances
  */
 void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 			guint activate_time, gpointer user_data) {
 	struct config *config = (struct config*)user_data;
 
-	// dismiss all open menus before opening a new one
 	popdown_all_menus();
 
 	GtkMenu *menu = (GtkMenu*)gtk_menu_new();
@@ -113,7 +129,6 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 
 	g_slist_foreach(config->options, gensystray_option_to_item, menu);
 
-	// exit closes only this instance
 	GtkWidget *exit_item = gtk_menu_item_new_with_label("exit");
 	g_signal_connect(G_OBJECT(exit_item), "activate",
 			 G_CALLBACK(destroy_instance), config);
@@ -133,7 +148,10 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 	osx_menu_watch(menu, popdown_all_menus);
 }
 
-
+/* creates a GtkStatusIcon for the given config instance, sets its icon
+ * and tooltip, connects the popup-menu signal, and stores the icon pointer
+ * in config->tray_icon to keep it alive
+ */
 static GtkStatusIcon *init_tray(struct config *config) {
 	GtkStatusIcon *icon = NULL;
 
@@ -171,6 +189,7 @@ int main(int argc, char **argv) {
 		exit(EXIT_FAILURE);
 	}
 
+	/* monitor watches the first config's path — all instances share one file */
 	GFileMonitor *cfg_monitor = monitor_config(cfg_path, (struct config *)all_configs->data);
 	free(cfg_path);
 

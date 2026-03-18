@@ -1,61 +1,108 @@
-# GenSysTray - version 1.0
+# GenSysTray
 
-A configurable system tray icon writen in C.
+A configurable system tray utility written in C. Click a tray icon to get a menu of commands.
 
-##LICENSE - GPLv3 no later option. Ignore any references to later versions
-See LICENSE to know your rights or go to
-http://www.gnu.org/licenses/gpl-3.0.txt
+## LICENSE
 
-###How to configure GenSysTray ?
+GPLv3, no later option. See LICENSE or http://www.gnu.org/licenses/gpl-3.0.txt
 
-open .config/gensystray/gensystray.cfg with your favorite
-text editor:
+## Building
 
-```
-@/full/path/to/the/16x16/icon.png
+Dependencies: `gtk+3`, `gcc`, `make`, `pkg-config`
 
-since you may be using multiple instances
-of gensystray. you can set a tooltip text for
-the icon by setting text between single quotes
-ended with a new line like so
-
-'the tooltiptext'
-
-[name of the button]
-command to execute on button click
-
-[name of another button]
-command to execute on button click
-
-the next option is actually a separator
-
-[-]
--
-
-[some other button]
-another command
-
-all the rest is ignore except text between square
-brackets and text in the next line right after
+```sh
+make init   # fetch submodules (libucl)
+make        # build
+make run    # build and run
 ```
 
-FAQ:
-- Why no later option ?
-Because I can't agree with a license that doesn't exist yet.
-Conceding such rights away would be irresponsible.
+## Configuration
 
-- Why a Generic System Tray Icon ?
-Sometimes you execute some scripts so often, that you would
-rather see them automated and at distance of a single click.
+Config file location: `~/.config/gensystray/gensystray.cfg`
 
-- Is there a way to change the default location of the config file ?
-Yes! You can set the environment variable GENSYSTRAY_PATH
-to your custom config file
+Override with: `GENSYSTRAY_PATH=/path/to/file gensystray`
 
-###Instructions to compile
-install libgtk-3-dev libsdl2-dev gcc
-run build_gcc.sh
+### Single instance
 
+```hcl
+tray {
+  icon    = "/path/to/icon.png"
+  tooltip = "My Tray"
+}
 
-###How it looks like
-[![GenSysTray](http://i2.ytimg.com/vi/Ip3fAB-YqTg/0.jpg)](https://www.youtube.com/watch?v=Ip3fAB-YqTg)
+item "Terminal" {
+  command = "xterm"
+}
+
+item "Browser" {
+  command = "firefox"
+}
+
+item "separator" {
+  separator = true
+}
+
+item "Editor" {
+  command = "nvim"
+}
+```
+
+### Multiple instances
+
+One config file can declare multiple tray icons. Everything must be inside
+`instance` blocks — no top-level items or tray block allowed.
+
+```hcl
+instance "work" {
+  tray {
+    icon    = "/path/to/work.png"
+    tooltip = "Work"
+  }
+
+  item "Terminal" {
+    command = "xterm"
+  }
+}
+
+instance "personal" {
+  tray {
+    icon    = "/path/to/personal.png"
+    tooltip = "Personal"
+  }
+
+  item "Music" {
+    command = "spotify"
+  }
+}
+```
+
+### Item ordering
+
+Items without `order` appear in declaration order. Items with `order` come
+first, sorted by value. Separators follow the same rules.
+
+```hcl
+item "First" {
+  command = "echo first"
+  order   = 1
+}
+
+item "Second" {
+  command = "echo second"
+  order   = 2
+}
+
+item "Appended" {
+  command = "echo appended"
+}
+```
+
+## FAQ
+
+**Why no later option on the license?**
+I can't agree with a license that doesn't exist yet. Conceding such rights
+would be irresponsible.
+
+**Why a Generic System Tray Icon?**
+Sometimes you run scripts so often that a single click is better than
+opening a terminal every time.
