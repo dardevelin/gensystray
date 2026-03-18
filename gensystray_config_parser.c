@@ -24,21 +24,6 @@
 #include "gensystray_config_parser.h"
 #include "gensystray_errors.h"
 
-static char *sstrndup(const char *src, size_t slen) {
-	if(!src || 0 == slen)
-		return NULL;
-
-	char *new;
-	if(NULL == (new = malloc(slen+1))) {
-		fprintf(stderr, "couldn't allocate memory for new string\n");
-		return NULL;
-	}
-
-	memcpy(new, src, slen);
-	new[slen] = '\0';
-	return new;
-}
-
 static long fstrchr(FILE * const stream, const long pos, const int c) {
 	fseek(stream, pos, SEEK_SET);
 	int ch = 0;
@@ -61,7 +46,7 @@ static char *fextract(FILE * const stream, const long start_pos, const long end_
 	}
 
 	char *buf = NULL;
-	if(NULL == (buf = malloc(buf_len+sizeof('\0')))) {
+	if(NULL == (buf = malloc(buf_len+1))) {
 		fprintf(stderr, "couldn't allocate memory for buffer\n");
 		return NULL;
 	}
@@ -83,7 +68,7 @@ char *get_config_path(void) {
 	char *gensystray_env = NULL;
 	gensystray_env = getenv("GENSYSTRAY_PATH");
 	if(NULL != gensystray_env) {
-		return sstrndup(gensystray_env, strlen(gensystray_env));
+		return strdup(gensystray_env);
 	}
 
 	// environment variable is not set, lets find HOME
@@ -96,13 +81,13 @@ char *get_config_path(void) {
 
 	// calculate the size of the path
 	size_t path_buf_len = strlen(home);
-	path_buf_len += sizeof('/');
+	path_buf_len += 1;
 	path_buf_len += strlen(def_config_path);
-	path_buf_len += sizeof('/');
+	path_buf_len += 1;
 	path_buf_len += strlen(def_config_file);
 
 	char *path = NULL;
-	if(NULL == (path = malloc(path_buf_len+sizeof('\0')))) {
+	if(NULL == (path = malloc(path_buf_len+1))) {
 		fprintf(stderr,"couldn't allocate memory for config_path\n");
 		return NULL;
 	}
@@ -143,13 +128,13 @@ static struct option *get_config_option(FILE *stream) {
 	int ch = fgetc(stream);
 
 	if(EOF == ch) {
-		fprintf(stderr,"formating error, couldn't find command\n");
+		fprintf(stderr,"formatting error, couldn't find command\n");
 		free(name);
 		return NULL;
 	}
 
 	if(NOT_FOUND == optstart) {
-		fprintf(stderr,"formating error, couldn't find command\n");
+		fprintf(stderr,"formatting error, couldn't find command\n");
 		free(name);
 		return NULL;
 	}
@@ -157,7 +142,7 @@ static struct option *get_config_option(FILE *stream) {
 	optend = fstrchr(stream, ftell(stream), '\n');
 
 	if(NOT_FOUND == optend) {
-		fprintf(stderr,"formanting error, couln't find command\n");
+		fprintf(stderr,"formatting error, couldn't find command\n");
 		free(name);
 		return NULL;
 	}
@@ -202,7 +187,7 @@ static char *get_icon_path(FILE *stream) {
 	long end_pos = fstrchr(stream, ftell(stream), '\n');
 
 	if(NOT_FOUND == end_pos) {
-		fprintf(stderr,"formating error, icon path invalid\n");
+		fprintf(stderr,"formatting error, icon path invalid\n");
 		goto clean_exit;
 	}
 
@@ -223,7 +208,7 @@ static char *get_tooltip_text(FILE *stream) {
 	long start_pos = fstrchr(stream, ftell(stream), '\'');
 
 	if(NOT_FOUND == start_pos) {
-		fprintf(stderr,"couldnt' find tooltip text in file\n");
+		fprintf(stderr,"couldn't find tooltip text in file\n");
 		goto clean_exit;
 	}
 
@@ -271,7 +256,7 @@ struct config *load_config(const char *config_path) {
 		return NULL;
 	}
 
-	config->config_path = sstrndup(config_path, strlen(config_path));
+	config->config_path = strdup(config_path);
 	config->icon_path   = get_icon_path(cfg);
 	config->tooltip     = get_tooltip_text(cfg);
 	config->options = NULL;
