@@ -22,7 +22,8 @@
 #include <stdlib.h>
 
 #include "gensystray_config_parser.h"
-#include "gensystray_errors.h"
+
+#define NOT_FOUND -1
 
 static long fstrchr(FILE * const stream, const long pos, const int c) {
 	fseek(stream, pos, SEEK_SET);
@@ -102,7 +103,7 @@ static struct option *get_config_option(FILE *stream) {
 
 	optstart = fstrchr(stream, ftell(stream), '[');
 
-	if(OPT_NOT_FOUND == optstart) {
+	if(NOT_FOUND == optstart) {
 		return NULL;
 	}
 

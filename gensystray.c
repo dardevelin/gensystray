@@ -27,9 +27,6 @@
 /* import our configuration routines  */
 #include "gensystray_config_parser.h"
 
-/* import common errors definitions */
-#include "gensystray_errors.h"
-
 /* import config monitor for live config reloading */
 #include "gensystray_config_monitor.h"
 
@@ -122,14 +119,14 @@ int main(int argc, char **argv) {
 	char *cfg_path = get_config_path();
 	if(!cfg_path) {
 		fprintf(stderr, "couldn't build cfg path\n");
-		exit(MEMORY_ERROR);
+		exit(EXIT_FAILURE);
 	}
 
 	struct config *config = load_config(cfg_path);
 	if(!config) {
 		fprintf(stderr, "could not load config file\n");
 		free(cfg_path);
-		exit(CFG_NOT_FOUND);
+		exit(EXIT_FAILURE);
 	}
 
 	GFileMonitor *cfg_monitor = monitor_config(cfg_path, config);
