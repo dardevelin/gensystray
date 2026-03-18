@@ -126,7 +126,47 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 	GtkMenu *menu = (GtkMenu*)gtk_menu_new();
 	config->menu = menu;
 
-	g_slist_foreach(config->options, gensystray_option_to_item, menu);
+	for(GSList *sl = config->sections; sl; sl = sl->next) {
+		struct section *sec = (struct section *)sl->data;
+
+		if(!sec->label) {
+			/* anonymous section — render items flat into the menu */
+			g_slist_foreach(sec->options, gensystray_option_to_item, menu);
+			continue;
+		}
+
+		if(!sec->expanded) {
+			/* collapsed section — render as a submenu */
+			GtkWidget *sub_item = gtk_menu_item_new_with_label(sec->label);
+			GtkMenu   *submenu  = (GtkMenu *)gtk_menu_new();
+			g_slist_foreach(sec->options, gensystray_option_to_item, submenu);
+			gtk_menu_item_set_submenu(GTK_MENU_ITEM(sub_item), GTK_WIDGET(submenu));
+			gtk_menu_shell_append((GtkMenuShell *)menu, sub_item);
+			continue;
+		}
+
+		/* expanded section — inline with configurable separators */
+		bool sep_top    = false;
+		bool sep_bottom = false;
+
+		if(sec->separators == SEPARATORS_TOP)    sep_top    = true;
+		if(sec->separators == SEPARATORS_BOTTOM) sep_bottom = true;
+		if(sec->separators == SEPARATORS_BOTH)   sep_top    = true;
+		if(sec->separators == SEPARATORS_BOTH)   sep_bottom = true;
+
+		if(sep_top)
+			gtk_menu_shell_append((GtkMenuShell *)menu,
+					      gtk_separator_menu_item_new());
+		if(sec->show_label) {
+			GtkWidget *header = gtk_menu_item_new_with_label(sec->label);
+			gtk_widget_set_sensitive(header, FALSE);
+			gtk_menu_shell_append((GtkMenuShell *)menu, header);
+		}
+		g_slist_foreach(sec->options, gensystray_option_to_item, menu);
+		if(sep_bottom)
+			gtk_menu_shell_append((GtkMenuShell *)menu,
+					      gtk_separator_menu_item_new());
+	}
 
 	GtkWidget *exit_item = gtk_menu_item_new_with_label("exit");
 	g_signal_connect(G_OBJECT(exit_item), "activate",
