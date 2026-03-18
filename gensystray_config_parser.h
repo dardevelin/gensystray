@@ -41,39 +41,6 @@ struct option {
  */
 char *get_config_path(void);
 
-/* this function takes a FILE pointer to stream which is expected
- * to be open, and uses it's current position to obtain options from.
- * It returns options until it reaches EOF if called consecutively.
- *
- * returns NULL if no option is found
- * returns NULL if no EOF is reached
- *
- * this function changes the position in the stream and does not rewind it.
- * the return struct option needs to be freed along with it's data members
- */
-struct option *get_config_option(FILE *stream);
-
-/* this function takes a FILE pointer to stream which is expected
- * to be open. saves it's current position, rewinds it and searches
- * for the icon_path identifier.
- *
- * returns the path in in a new null terminated string in case of success
- * returns NULL if can't find identifier
- * returns NULL if there is a formating error
- * re-sets the stream back to its original position before returning
- */
-char *get_icon_path(FILE *stream);
-
-/* this function takes a FILE pointer to stream which is expected
- * to be open. saves it's current position, rewinds it and searches
- * for tooltip_text identifier.
- *
- * returns the tooltip_tex in a null terminated string in case of success
- * returns NULL if can't find identifier
- * returns NULL if there is a formatting error
- * re-sets the stream back to it's original position before returning
- */
-char *get_tooltip_text(FILE *cfg);
 
 /* holds all configuration state loaded from the config file */
 struct config {

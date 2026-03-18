@@ -22,8 +22,58 @@
 #include <stdlib.h>
 
 #include "gensystray_config_parser.h"
-#include "gensystray_utils.h"
 #include "gensystray_errors.h"
+
+static char *sstrndup(const char *src, size_t slen) {
+	if(!src || 0 == slen)
+		return NULL;
+
+	char *new;
+	if(NULL == (new = malloc(slen+1))) {
+		fprintf(stderr, "couldn't allocate memory for new string\n");
+		return NULL;
+	}
+
+	memcpy(new, src, slen);
+	new[slen] = '\0';
+	return new;
+}
+
+static long fstrchr(FILE * const stream, const long pos, const int c) {
+	fseek(stream, pos, SEEK_SET);
+	int ch = 0;
+	while(EOF != (ch = fgetc(stream))) {
+		if(c == ch) {
+			ungetc(ch, stream);
+			return ftell(stream);
+		}
+	}
+	return NOT_FOUND;
+}
+
+static char *fextract(FILE * const stream, const long start_pos, const long end_pos) {
+	fseek(stream, start_pos, SEEK_SET);
+	long buf_len = end_pos - start_pos;
+
+	if(0 >= buf_len) {
+		fprintf(stderr, "invalid extraction range\n");
+		return NULL;
+	}
+
+	char *buf = NULL;
+	if(NULL == (buf = malloc(buf_len+sizeof('\0')))) {
+		fprintf(stderr, "couldn't allocate memory for buffer\n");
+		return NULL;
+	}
+
+	buf[buf_len] = '\0';
+
+	char *iter;
+	for(iter = buf; buf_len--; ++iter)
+		*iter = fgetc(stream);
+
+	return buf;
+}
 
 // global default values
 static const char *def_config_path = ".config/gensystray";
@@ -61,7 +111,7 @@ char *get_config_path(void) {
 	return path;
 }
 
-struct option *get_config_option(FILE *stream) {
+static struct option *get_config_option(FILE *stream) {
 	//find option
 	long optstart = 0;
 
@@ -136,7 +186,7 @@ struct option *get_config_option(FILE *stream) {
 	return option;
 }
 
-char *get_icon_path(FILE *stream) {
+static char *get_icon_path(FILE *stream) {
 	char *ipath = NULL;
 	const long stream_pos = ftell(stream);
 
@@ -164,7 +214,7 @@ clean_exit:
 	return ipath;
 }
 
-char *get_tooltip_text(FILE *stream) {
+static char *get_tooltip_text(FILE *stream) {
 	char *ttext = NULL;
 	const long stream_pos = ftell(stream);
 
