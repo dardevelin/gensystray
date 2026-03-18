@@ -135,7 +135,8 @@ static GSList *parse_items(const ucl_object_t *scope) {
 	return g_slist_concat(ordered, unordered);
 }
 
-static struct config *parse_scope(const char *config_path, const ucl_object_t *scope) {
+static struct config *parse_scope(const char *config_path, const char *name,
+				  const ucl_object_t *scope) {
 	struct config *config = malloc(sizeof(struct config));
 	if(!config) {
 		fprintf(stderr, "load_config: couldn't allocate config\n");
@@ -143,6 +144,7 @@ static struct config *parse_scope(const char *config_path, const ucl_object_t *s
 	}
 
 	config->config_path = strdup(config_path);
+	config->name        = name ? strdup(name) : NULL;
 	config->icon_path   = NULL;
 	config->tooltip     = NULL;
 	config->options     = NULL;
@@ -194,7 +196,7 @@ GSList *load_config(const char *config_path) {
 
 	// single instance: top-level tray block present
 	if(ucl_object_lookup(root, "tray")) {
-		struct config *config = parse_scope(config_path, root);
+		struct config *config = parse_scope(config_path, NULL, root);
 		if(config)
 			configs = g_slist_append(configs, config);
 	} else {
@@ -210,7 +212,9 @@ GSList *load_config(const char *config_path) {
 				ucl_object_iter_t iiit = NULL;
 				const ucl_object_t *inst;
 				for(; NULL != (inst = ucl_iterate_object(elem, &iiit, true)); ) {
-					struct config *config = parse_scope(config_path, inst);
+					struct config *config = parse_scope(config_path,
+									    ucl_object_key(inst),
+									    inst);
 					if(config)
 						configs = g_slist_append(configs, config);
 				}
@@ -234,6 +238,7 @@ void free_config(struct config *config) {
 		return;
 
 	free(config->config_path);
+	free(config->name);
 	free(config->icon_path);
 	free(config->tooltip);
 

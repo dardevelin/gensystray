@@ -147,6 +147,33 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 	osx_menu_watch(menu, popdown_all_menus);
 }
 
+/* if name is NULL, returns configs unchanged. otherwise finds the named
+ * instance, frees the rest, and returns a one-element list. exits on no match.
+ */
+static GSList *filter_instance(GSList *configs, const char *name) {
+	if(!name)
+		return configs;
+
+	struct config *match = NULL;
+	for(GSList *l = configs; l; l = l->next) {
+		struct config *c = (struct config *)l->data;
+		if(c->name && strcmp(c->name, name) == 0) {
+			match = c;
+			break;
+		}
+	}
+
+	if(!match) {
+		fprintf(stderr, "instance '%s' not found in config\n", name);
+		free_configs(configs);
+		exit(EXIT_FAILURE);
+	}
+
+	configs = g_slist_remove(configs, match);
+	free_configs(configs);
+	return g_slist_prepend(NULL, match);
+}
+
 /* creates a GtkStatusIcon for the given config instance, sets its icon
  * and tooltip, connects the popup-menu signal, and stores the icon pointer
  * in config->tray_icon to keep it alive
@@ -175,6 +202,15 @@ static GtkStatusIcon *init_tray(struct config *config) {
 int main(int argc, char **argv) {
 	gtk_init(&argc, &argv);
 
+	/* parse --instance <name> before gtk consumes argv */
+	const char *instance_filter = NULL;
+	for(int i = 1; i < argc; i++) {
+		if(strcmp(argv[i], "--instance") == 0 && i + 1 < argc) {
+			instance_filter = argv[i + 1];
+			break;
+		}
+	}
+
 	char *cfg_path = get_config_path();
 	if(!cfg_path) {
 		fprintf(stderr, "couldn't build cfg path\n");
@@ -187,6 +223,8 @@ int main(int argc, char **argv) {
 		free(cfg_path);
 		exit(EXIT_FAILURE);
 	}
+
+	all_configs = filter_instance(all_configs, instance_filter);
 
 	/* monitor watches the first config's path — all instances share one file */
 	GFileMonitor *cfg_monitor = monitor_config(cfg_path, (struct config *)all_configs->data);

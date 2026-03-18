@@ -45,6 +45,7 @@ char *get_config_path(void);
 /* holds all configuration state loaded from the config file */
 struct config {
 	char *config_path;
+	char *name;       /* instance name, NULL in single-instance mode */
 	char *icon_path;
 	char *tooltip;
 	GSList *options;
