@@ -21,212 +21,42 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <ucl.h>
+
 #include "gensystray_config_parser.h"
-
-#define NOT_FOUND -1
-
-static long fstrchr(FILE * const stream, const long pos, const int c) {
-	fseek(stream, pos, SEEK_SET);
-	int ch = 0;
-	while(EOF != (ch = fgetc(stream))) {
-		if(c == ch) {
-			ungetc(ch, stream);
-			return ftell(stream);
-		}
-	}
-	return NOT_FOUND;
-}
-
-static char *fextract(FILE * const stream, const long start_pos, const long end_pos) {
-	fseek(stream, start_pos, SEEK_SET);
-	long buf_len = end_pos - start_pos;
-
-	if(0 >= buf_len) {
-		fprintf(stderr, "invalid extraction range\n");
-		return NULL;
-	}
-
-	char *buf = NULL;
-	if(NULL == (buf = malloc(buf_len+1))) {
-		fprintf(stderr, "couldn't allocate memory for buffer\n");
-		return NULL;
-	}
-
-	buf[buf_len] = '\0';
-
-	char *iter;
-	for(iter = buf; buf_len--; ++iter)
-		*iter = fgetc(stream);
-
-	return buf;
-}
 
 // global default values
 static const char *def_config_path = ".config/gensystray";
 static const char *def_config_file = "gensystray.cfg";
 
 char *get_config_path(void) {
-	char *gensystray_env = NULL;
-	gensystray_env = getenv("GENSYSTRAY_PATH");
+	char *gensystray_env = getenv("GENSYSTRAY_PATH");
 	if(NULL != gensystray_env) {
 		return strdup(gensystray_env);
 	}
 
-	// environment variable is not set, lets find HOME
-	const char *home = NULL;
-	home = getenv("HOME");
+	const char *home = getenv("HOME");
 	if(NULL == home) {
-		fprintf(stderr,"couldn't find home directory\n");
+		fprintf(stderr, "couldn't find home directory\n");
 		return NULL;
 	}
 
-	// calculate the size of the path
-	size_t path_buf_len = strlen(home);
-	path_buf_len += 1;
-	path_buf_len += strlen(def_config_path);
-	path_buf_len += 1;
-	path_buf_len += strlen(def_config_file);
+	size_t len = strlen(home) + 1
+	           + strlen(def_config_path) + 1
+	           + strlen(def_config_file) + 1;
 
-	char *path = NULL;
-	if(NULL == (path = malloc(path_buf_len+1))) {
-		fprintf(stderr,"couldn't allocate memory for config_path\n");
+	char *path = malloc(len);
+	if(NULL == path) {
+		fprintf(stderr, "couldn't allocate memory for config_path\n");
 		return NULL;
 	}
 
-	sprintf(path,"%s/%s/%s", home, def_config_path, def_config_file);
+	snprintf(path, len, "%s/%s/%s", home, def_config_path, def_config_file);
 	return path;
 }
 
-static struct option *get_config_option(FILE *stream) {
-	//find option
-	long optstart = 0;
-
-	optstart = fstrchr(stream, ftell(stream), '[');
-
-	if(NOT_FOUND == optstart) {
-		return NULL;
-	}
-
-	long optend = 0;
-
-	optend = fstrchr(stream, ftell(stream), ']');
-
-	if(NOT_FOUND == optend) {
-		return NULL;
-	}
-
-	// skipping the '[' character
-	char *name = fextract(stream, optstart+1, optend);
-
-	if(!name) {
-		fprintf(stderr,"fextract failed to give a name\n");
-		return NULL;
-	}
-
-	// this is the new line after the name
-	optstart = fstrchr(stream, ftell(stream), '\n');
-	// skip the new line
-	int ch = fgetc(stream);
-
-	if(EOF == ch) {
-		fprintf(stderr,"formatting error, couldn't find command\n");
-		free(name);
-		return NULL;
-	}
-
-	if(NOT_FOUND == optstart) {
-		fprintf(stderr,"formatting error, couldn't find command\n");
-		free(name);
-		return NULL;
-	}
-
-	optend = fstrchr(stream, ftell(stream), '\n');
-
-	if(NOT_FOUND == optend) {
-		fprintf(stderr,"formatting error, couldn't find command\n");
-		free(name);
-		return NULL;
-	}
-
-	// +1 don't include the '\n' character in the command
-	char *command = fextract(stream, optstart+1, optend);
-
-	if(!command) {
-		fprintf(stderr,"fextract failed to give a command\n");
-		free(name);
-		return NULL;
-	}
-
-	struct option *option = malloc(sizeof(struct option));
-
-	if(!option) {
-		fprintf(stderr,"couldn't allocate memory for option structure\n");
-		free(name);
-		free(command);
-		return NULL;
-	}
-
-	option->name = name;
-	option->command = command;
-
-	return option;
-}
-
-static char *get_icon_path(FILE *stream) {
-	char *ipath = NULL;
-	const long stream_pos = ftell(stream);
-
-	rewind(stream);
-
-	long start_pos = fstrchr(stream, ftell(stream), '@');
-
-	if(NOT_FOUND == start_pos) {
-		fprintf(stderr,"couldn't find icon path in file\n");
-		goto clean_exit;
-	}
-
-	long end_pos = fstrchr(stream, ftell(stream), '\n');
-
-	if(NOT_FOUND == end_pos) {
-		fprintf(stderr,"formatting error, icon path invalid\n");
-		goto clean_exit;
-	}
-
-	// +1 to skip the '@'
-	ipath = fextract(stream, start_pos+1, end_pos);
-
-clean_exit:
-	fseek(stream, stream_pos, SEEK_SET);
-	return ipath;
-}
-
-static char *get_tooltip_text(FILE *stream) {
-	char *ttext = NULL;
-	const long stream_pos = ftell(stream);
-
-	rewind(stream);
-
-	long start_pos = fstrchr(stream, ftell(stream), '\'');
-
-	if(NOT_FOUND == start_pos) {
-		fprintf(stderr,"couldn't find tooltip text in file\n");
-		goto clean_exit;
-	}
-
-	long end_pos = fstrchr(stream, ftell(stream), '\n');
-
-	if(NOT_FOUND == end_pos) {
-		fprintf(stderr,"formatting error, tooltip text invalid\n");
-		goto clean_exit;
-	}
-
-	// +1 to skip the '\'' and -1 to remove the trailing '\''
-	ttext = fextract(stream, start_pos+1, end_pos-1);
-
-clean_exit:
-
-	fseek(stream, stream_pos, SEEK_SET);
-	return ttext;
+static int option_order_cmp(const void *a, const void *b) {
+	return ((const struct option *)a)->order - ((const struct option *)b)->order;
 }
 
 static void option_dalloc(void *data) {
@@ -236,39 +66,130 @@ static void option_dalloc(void *data) {
 	free(opt);
 }
 
-struct config *load_config(const char *config_path) {
-	FILE *cfg = NULL;
-	struct option *opt = NULL;
+// parse items from a UCL object scope (top-level or instance block)
+// items with order come first (sorted), then declaration-order items after
+static GSList *parse_items(const ucl_object_t *scope) {
+	GSList *ordered = NULL;
+	GSList *unordered = NULL;
 
+	ucl_object_iter_t it = ucl_object_iterate_new(scope);
+	const ucl_object_t *cur;
+
+	for(; NULL != (cur = ucl_object_iterate_safe(it, true)); ) {
+		if(strcmp(ucl_object_key(cur), "item") != 0)
+			continue;
+
+		// iterate implicit array of "item" blocks with expand_values=true
+		// so each element has the block label as its key ("New Button 1" etc)
+		ucl_object_iter_t iit = NULL;
+		const ucl_object_t *item;
+		for(; NULL != (item = ucl_iterate_object(cur, &iit, true)); ) {
+			struct option *opt = malloc(sizeof(struct option));
+			if(!opt) {
+				fprintf(stderr, "couldn't allocate option\n");
+				continue;
+			}
+
+			// block label: item "New Button 1" { } — key is "New Button 1"
+			const char *key = ucl_object_key(item);
+			opt->name = strdup(key ? key : "");
+
+			// separator
+			const ucl_object_t *sep = ucl_object_lookup(item, "separator");
+			if(sep && ucl_object_toboolean(sep)) {
+				free(opt->name);
+				opt->name    = strdup("--");
+				opt->command = strdup("--");
+			} else {
+				const ucl_object_t *cmd = ucl_object_lookup(item, "command");
+				if(cmd) {
+					opt->command = strdup(ucl_object_tostring(cmd));
+				} else {
+					opt->command = strdup("");
+				}
+			}
+
+			// ordering
+			const ucl_object_t *ord = ucl_object_lookup(item, "order");
+			if(ord) {
+				opt->order = (int)ucl_object_toint(ord);
+				ordered = g_slist_prepend(ordered, opt);
+			} else {
+				opt->order = -1;
+				unordered = g_slist_prepend(unordered, opt);
+			}
+
+		}
+	}
+
+	ucl_object_iterate_free(it);
+
+	// sort ordered items by order value
+	ordered = g_slist_sort(ordered, (GCompareFunc)option_order_cmp);
+
+	// ordered first, then unordered in declaration order
+	unordered = g_slist_reverse(unordered);
+	return g_slist_concat(ordered, unordered);
+}
+
+static struct config *parse_scope(const char *config_path, const ucl_object_t *scope) {
+	struct config *config = malloc(sizeof(struct config));
+	if(!config) {
+		fprintf(stderr, "load_config: couldn't allocate config\n");
+		return NULL;
+	}
+
+	config->config_path = strdup(config_path);
+	config->icon_path   = NULL;
+	config->tooltip     = NULL;
+	config->options     = NULL;
+
+	const ucl_object_t *tray = ucl_object_lookup(scope, "tray");
+	if(tray) {
+		const ucl_object_t *icon = ucl_object_lookup(tray, "icon");
+		if(icon)
+			config->icon_path = strdup(ucl_object_tostring(icon));
+
+		const ucl_object_t *tooltip = ucl_object_lookup(tray, "tooltip");
+		if(tooltip)
+			config->tooltip = strdup(ucl_object_tostring(tooltip));
+	}
+
+	config->options = parse_items(scope);
+
+	return config;
+}
+
+struct config *load_config(const char *config_path) {
 	if(!config_path) {
 		fprintf(stderr, "load_config: config_path is NULL\n");
 		return NULL;
 	}
 
-	if(NULL == (cfg = fopen(config_path, "r"))) {
-		fprintf(stderr, "load_config: could not open config file\n");
+	struct ucl_parser *parser = ucl_parser_new(0);
+	if(!parser) {
+		fprintf(stderr, "load_config: couldn't create UCL parser\n");
 		return NULL;
 	}
 
-	struct config *config = malloc(sizeof(struct config));
-	if(!config) {
-		fprintf(stderr, "load_config: couldn't allocate config\n");
-		fclose(cfg);
+	if(!ucl_parser_add_file(parser, config_path)) {
+		fprintf(stderr, "load_config: %s\n", ucl_parser_get_error(parser));
+		ucl_parser_free(parser);
 		return NULL;
 	}
 
-	config->config_path = strdup(config_path);
-	config->icon_path   = get_icon_path(cfg);
-	config->tooltip     = get_tooltip_text(cfg);
-	config->options = NULL;
-
-	while(NULL != (opt = get_config_option(cfg))) {
-		config->options = g_slist_prepend(config->options, opt);
+	const ucl_object_t *root = ucl_parser_get_object(parser);
+	if(!root) {
+		fprintf(stderr, "load_config: empty config\n");
+		ucl_parser_free(parser);
+		return NULL;
 	}
 
-	config->options = g_slist_reverse(config->options);
+	struct config *config = parse_scope(config_path, root);
 
-	fclose(cfg);
+	ucl_object_unref((ucl_object_t *)root);
+	ucl_parser_free(parser);
+
 	return config;
 }
 

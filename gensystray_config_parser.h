@@ -31,6 +31,7 @@
 struct option {
 	char *name;
 	char *command;
+	int   order;    /* -1 = unordered (declaration order) */
 };
 
 /* this function returns a new string with the path to the configuration
