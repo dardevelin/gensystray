@@ -795,8 +795,16 @@ static GSList *parse_on_watch_blocks(const char *raw_text,
 			warn_unknown_keys(br, known_watch_body, wbd);
 
 			const ucl_object_t *cmd = ucl_object_lookup(br, "command");
-			if(cmd)
-				command_tpl = strdup(ucl_object_tostring(cmd));
+			if(cmd) {
+				const char *s = ucl_object_tostring(cmd);
+				if(s) {
+					command_tpl = strdup(s);
+				} else {
+					fprintf(stderr, "gensystray: section '%s': "
+					        "'on watch-*' command must be a string, "
+					        "not an array\n", section_name);
+				}
+			}
 			ucl_object_unref(br);
 		}
 		ucl_parser_free(bp);
