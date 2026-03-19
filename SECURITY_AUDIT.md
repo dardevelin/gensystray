@@ -7,7 +7,31 @@ All findings are in user-space — the config file runs with the same privilege
 as the user. However, Finding 1+2 are exploitable via crafted filenames on
 disk (no config access needed).
 
-All findings have been fixed and verified.
+All findings have been fixed and verified in commit `f40aeb7` (version 2.5.1).
+
+## Fix Verification
+
+Every PoC was re-run after applying fixes to confirm the attack is blocked:
+
+| Finding | Attack Vector | Before Fix | After Fix |
+|---------|--------------|------------|-----------|
+| 1+2 | `value = "x; touch /tmp/pwned; echo y"` | `/tmp/pwned` created | SAFE: not created |
+| 3a | `refresh = "1ms"` process storm | 1,829 spawns/3s (~609/sec) | 28 spawns/3s (~9/sec), warning: clamped to 100ms |
+| 3b | `refresh = "4294968s"` overflow wraparound | Wrapped to 704ms (7 ticks/5s) | Clamped to 24h (1 tick), warning: overflows |
+| 4 | Symlink cycle + `depth = -1` | exit 139 (SIGSEGV) | exit 124 (survived, symlinks skipped) |
+| 5a | `tooltip = true` wrong type | exit 139 (SIGSEGV) | exit 124 (survived, safe fallback) |
+| 5b | `from = 123` wrong type | exit 139 (SIGSEGV) | exit 124 (survived, safe fallback) |
+| 6 | `max_emit_depth = 100000` circular emit | exit 139 (SIGSEGV) | Clamped to 256, cycle caught, survived |
+
+Valgrind (post-fix): 0 definitely lost, 0 indirectly lost, 0 possibly lost, 0 errors.
+
+## Files Modified
+
+| File | Changes |
+|------|---------|
+| `gensystray.c` | shell-quote `{value}` in `on_emit_signal`; clamp `max_emit_depth` to 256 |
+| `gensystray_config_parser.c` | add `ucl_tostring_safe` wrapper; enforce 100ms min / 24h max in `parse_duration_ms`; cap `depth=-1` to 64 in `expand_dir`/`watch_dir`; skip symlinked directories; expose `shell_quote` |
+| `gensystray_config_parser.h` | expose `shell_quote` declaration |
 
 ## Confirmed Findings
 
@@ -26,6 +50,7 @@ Result: `/tmp/pwned` created via injected shell command.
 
 **Fix:** Apply `shell_quote()` to `{value}` before substitution in command
 templates, matching the pattern used in `on_watch_signal`.
+**Fixed in:** `gensystray.c`, `on_emit_signal` — added `shell_quote(value)` call.
 
 ### Finding 2: Command Injection Chain via Watch → Emit [High]
 
@@ -37,6 +62,7 @@ flowed to an `on emit` handler (Finding 1), the unquoted path reached `sh -c`.
 
 **Fix:** Fixed by Finding 1's fix — `{value}` is now always shell-quoted at
 consumption time in `on_emit_signal`.
+**Fixed in:** same as Finding 1.
 
 ### Finding 3: Integer Overflow / DoS in parse_duration_ms [Medium]
 
@@ -51,6 +77,7 @@ guint without overflow check. No minimum value enforced.
 guint truncation, causing unintended high-frequency polling.
 
 **Fix:** Enforce minimum 100ms, clamp overflow to 24h, check bounds before cast.
+**Fixed in:** `gensystray_config_parser.c`, `parse_duration_ms` — added bounds checks and minimum.
 
 ### Finding 4: Stack Overflow via Symlink Cycle in Glob Recursion [Medium]
 
@@ -66,6 +93,7 @@ with `depth = -1` overflowed the stack without symlinks.
 
 **Fix:** Cap `depth = -1` to 64 internally. Skip symlinked directories via
 `G_FILE_TEST_IS_SYMLINK` check in both `expand_dir` and `watch_dir`.
+**Fixed in:** `gensystray_config_parser.c`, `expand_dir` and `watch_dir` — added `MAX_GLOB_DEPTH` cap and symlink skip.
 
 ### Finding 5: NULL Dereference on Wrong Config Value Types [Medium]
 
@@ -80,6 +108,7 @@ Return value passed to `strdup(NULL)` caused SIGSEGV.
 
 **Fix:** Added `ucl_tostring_safe()` wrapper that returns a fallback string
 instead of NULL. Applied to all `ucl_object_tostring` → `strdup` paths.
+**Fixed in:** `gensystray_config_parser.c` — added `ucl_tostring_safe()`, replaced all vulnerable `strdup(ucl_object_tostring(...))` calls.
 
 ### Finding 6: Stack Overflow via max_emit_depth Override [Medium]
 
@@ -93,6 +122,7 @@ well before the depth guard fired.
 Default depth=16 survived cleanly.
 
 **Fix:** Clamp `max_emit_depth` to hard ceiling of 256 with warning.
+**Fixed in:** `gensystray.c`, `start_live_timers` — clamp with `fprintf` warning.
 
 ## Not Exploitable (Confirmed Safe)
 
