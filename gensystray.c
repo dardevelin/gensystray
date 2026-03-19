@@ -132,11 +132,7 @@ static gboolean live_tick(gpointer user_data) {
 			*nl = '\0';
 	}
 
-	/* trim trailing newline before matching */
 	char *trimmed = out ? out : "";
-	char *nl = strchr(trimmed, '\n');
-	if(nl)
-		*nl = '\0';
 
 	/* match on blocks — first match wins */
 	struct on_block *matched = NULL;
