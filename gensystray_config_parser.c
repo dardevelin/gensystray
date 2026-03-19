@@ -903,8 +903,27 @@ static GSList *parse_populates(const ucl_object_t *scope)
 		if(item) {
 			const ucl_object_t *lbl = ucl_object_lookup(item, "label");
 			const ucl_object_t *cmd = ucl_object_lookup(item, "command");
-			pop->label_tpl   = strdup(lbl ? ucl_object_tostring(lbl) : "{filename}");
-			pop->command_tpl = strdup(cmd ? ucl_object_tostring(cmd) : "");
+			pop->label_tpl = strdup(lbl ? ucl_object_tostring(lbl) : "{filename}");
+
+			if(cmd && UCL_ARRAY == ucl_object_type(cmd)) {
+				/* array command — join elements with spaces for the template.
+				 * expand_dir wraps the result in sh -c so this works for
+				 * commands like ["ghostwriter", "{filepath}"]
+				 */
+				GString *joined = g_string_new(NULL);
+				ucl_object_iter_t ait = NULL;
+				const ucl_object_t *ae;
+				for(; NULL != (ae = ucl_iterate_object(cmd, &ait, true)); ) {
+					if(0 < joined->len)
+						g_string_append_c(joined, ' ');
+					const char *s = ucl_object_tostring(ae);
+					if(s)
+						g_string_append(joined, s);
+				}
+				pop->command_tpl = g_string_free(joined, FALSE);
+			} else {
+				pop->command_tpl = strdup(cmd ? ucl_object_tostring(cmd) : "");
+			}
 		} else {
 			pop->label_tpl   = strdup("{filename}");
 			pop->command_tpl = strdup("");
@@ -1093,26 +1112,34 @@ GSList *load_config(const char *config_path) {
 	/* build a sanitised copy for UCL: blank out "on exit ..." and
 	 * "on output ..." lines so UCL never sees them.  raw_text is kept
 	 * intact for parse_on_blocks which handles those lines itself.
+	 * we must blank the entire on block including its braced body,
+	 * whether single-line or multi-line, to keep brace balance for UCL.
 	 */
 	char *ucl_text = raw_text ? strdup(raw_text) : NULL;
 	if(ucl_text) {
 		char *q = ucl_text;
 		for(; '\0' != *q; ) {
 			/* skip leading whitespace */
-			char *line_start = q;
 			for(; ' ' == *q || '\t' == *q; q++) {}
 			bool is_on = (0 == strncmp(q, "on exit",   7) && (' ' == q[7]  || '\t' == q[7]))
 			          || (0 == strncmp(q, "on output", 9) && (' ' == q[9]  || '\t' == q[9] || '"' == q[9]));
-			/* find end of logical block — blank entire run until matching '}' */
 			if(is_on) {
-				/* blank to end of line first */
-				for(; '\0' != *q && '\n' != *q; q++)
+				/* blank until we find '{', then blank the whole braced body */
+				for(; '\0' != *q && '{' != *q && '\n' != *q; q++)
 					*q = ' ';
-				/* if the opening brace is on this line, blank the whole block */
+				if('{' == *q) {
+					int depth = 1;
+					*q++ = ' ';
+					for(; '\0' != *q && 0 < depth; q++) {
+						if('{' == *q)      depth++;
+						else if('}' == *q) depth--;
+						if('\n' != *q)
+							*q = ' ';
+					}
+				}
 			} else {
 				for(; '\0' != *q && '\n' != *q; q++) {}
 			}
-			(void)line_start;
 			if('\n' == *q) q++;
 		}
 	}
