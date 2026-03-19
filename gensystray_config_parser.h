@@ -38,7 +38,16 @@ typedef enum {
 struct option {
 	char *name;
 	char *command;
-	int   order;    /* -1 = unordered (declaration order) */
+	int   order;       /* -1 = unordered (declaration order) */
+
+	/* live item fields — NULL/0 for static items */
+	char    *live_cmd;      /* shell command to poll, NULL = static */
+	guint    refresh_ms;    /* polling interval in milliseconds */
+	guint    tick_counter;  /* master tick countdown, reset when it fires */
+	bool     independent;   /* true = own timer, excluded from master tick */
+	char    *live_output;   /* last output from live_cmd */
+	guint    timer_id;      /* GLib timer source ID, 0 = not running */
+	void    *live_label;    /* GtkWidget *, set while menu is open */
 };
 
 /* context passed to GFileMonitor callbacks for glob populate sources.

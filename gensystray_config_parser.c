@@ -56,6 +56,30 @@ char *get_config_path(void) {
 	return path;
 }
 
+/* parse a duration string like "2s", "500ms", "1m", "1h" into milliseconds.
+ * returns 0 and logs an error if the format is unrecognised.
+ */
+static guint parse_duration_ms(const char *s) {
+	if(!s || '\0' == s[0])
+		return 0;
+
+	char *end = NULL;
+	long val  = strtol(s, &end, 10);
+
+	if(end == s || val <= 0) {
+		fprintf(stderr, "refresh: invalid value '%s'\n", s);
+		return 0;
+	}
+
+	if(0 == strcmp(end, "ms")) return (guint)val;
+	if(0 == strcmp(end, "s"))  return (guint)(val * 1000);
+	if(0 == strcmp(end, "m"))  return (guint)(val * 60 * 1000);
+	if(0 == strcmp(end, "h"))  return (guint)(val * 3600 * 1000);
+
+	fprintf(stderr, "refresh: unknown unit in '%s' (use ms, s, m, h)\n", s);
+	return 0;
+}
+
 static int option_order_cmp(gconstpointer a, gconstpointer b) {
 	return ((const struct option *)a)->order - ((const struct option *)b)->order;
 }
@@ -70,8 +94,12 @@ static int option_alpha_cmp(gconstpointer a, gconstpointer b) {
 
 static void option_dalloc(void *data) {
 	struct option *opt = (struct option *)data;
+	if(0 != opt->timer_id)
+		g_source_remove(opt->timer_id);
 	free(opt->name);
 	free(opt->command);
+	free(opt->live_cmd);
+	free(opt->live_output);
 	free(opt);
 }
 
@@ -135,6 +163,33 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 
 				const ucl_object_t *cmd = ucl_object_lookup(item, "command");
 				opt->command = strdup(cmd ? ucl_object_tostring(cmd) : "");
+
+				/* live item fields */
+				opt->live_cmd    = NULL;
+				opt->refresh_ms  = 0;
+				opt->live_output = NULL;
+				opt->timer_id    = 0;
+				opt->live_label  = NULL;
+
+				const ucl_object_t *live = ucl_object_lookup(item, "live");
+				if(live) {
+					const ucl_object_t *ref = ucl_object_lookup(item, "refresh");
+					if(!ref) {
+						fprintf(stderr, "[!] item '%s': live requires refresh\n", opt->name);
+						free(opt->name);
+						opt->name    = strdup("[!] missing refresh");
+						opt->command = strdup("");
+						opt->order   = -1;
+						unordered = g_slist_prepend(unordered, opt);
+						continue;
+					}
+					opt->live_cmd    = strdup(ucl_object_tostring(live));
+					opt->refresh_ms  = parse_duration_ms(ucl_object_tostring(ref));
+					opt->tick_counter = 0;
+
+					const ucl_object_t *ind = ucl_object_lookup(item, "independent");
+					opt->independent = ind && ucl_object_toboolean(ind);
+				}
 
 				const ucl_object_t *ord = ucl_object_lookup(item, "order");
 				if(ord) {

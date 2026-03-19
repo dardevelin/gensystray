@@ -72,6 +72,127 @@ void delegate_system_call(GtkWidget *widget, gpointer user_data) {
 	g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL);
 }
 
+/* run opt->live_cmd synchronously, capture first line of stdout,
+ * update opt->live_output, and refresh the label widget if open.
+ * returns TRUE so g_timeout_add keeps firing.
+ */
+static gboolean live_tick(gpointer user_data) {
+	struct option *opt = (struct option *)user_data;
+
+	char *out  = NULL;
+	char *err  = NULL;
+	int   status = 0;
+	char *argv[] = { "sh", "-c", opt->live_cmd, NULL };
+
+	GError *gerr = NULL;
+	g_spawn_sync(NULL, argv, NULL,
+		     G_SPAWN_SEARCH_PATH,
+		     NULL, NULL,
+		     &out, &err, &status, &gerr);
+
+	if(gerr) {
+		g_error_free(gerr);
+		g_free(out);
+		g_free(err);
+		return TRUE;
+	}
+
+	/* trim trailing newline */
+	if(out) {
+		char *nl = strchr(out, '\n');
+		if(nl)
+			*nl = '\0';
+	}
+
+	free(opt->live_output);
+	opt->live_output = strdup(out ? out : "");
+
+	if(opt->live_label)
+		gtk_label_set_text(GTK_LABEL(opt->live_label), opt->live_output);
+
+	g_free(out);
+	g_free(err);
+	return TRUE;
+}
+
+/* Euclid's algorithm — used to find the master tick interval.
+ * given all live item refresh intervals, their GCD is the fastest interval
+ * at which one timer can serve all of them. e.g. 3s and 5s items share a
+ * 1s master tick; the 3s item fires every 3rd tick, the 5s every 5th.
+ */
+static guint gcd(guint a, guint b) {
+	for(; 0 != b; ) {
+		guint t = b;
+		b = a % b;
+		a = t;
+	}
+	return a;
+}
+
+/* context for the master tick — holds the GCD interval and the list of opts */
+struct master_ctx {
+	guint   interval_ms;
+	GSList *opts;
+};
+
+/* master tick callback — fires at GCD interval, each item tracks its own
+ * countdown. independent items use their own timers and are not in this list.
+ */
+static gboolean master_tick(gpointer user_data) {
+	struct master_ctx *ctx = (struct master_ctx *)user_data;
+	for(GSList *l = ctx->opts; l; l = l->next) {
+		struct option *opt = (struct option *)l->data;
+		opt->tick_counter += ctx->interval_ms;
+		if(opt->tick_counter >= opt->refresh_ms) {
+			opt->tick_counter = 0;
+			live_tick(opt);
+		}
+	}
+	return TRUE;
+}
+
+/* start timers for all live options across all sections of config.
+ * independent items get their own g_timeout_add timer.
+ * all other live items share one master tick at GCD of their refresh intervals.
+ */
+static void start_live_timers(struct config *config) {
+	GSList *master_opts = NULL;
+	guint   master_ms   = 0;
+
+	for(GSList *sl = config->sections; sl; sl = sl->next) {
+		struct section *sec = (struct section *)sl->data;
+		for(GSList *ol = sec->options; ol; ol = ol->next) {
+			struct option *opt = (struct option *)ol->data;
+			if(!opt->live_cmd)
+				continue;
+
+			live_tick(opt);   /* initial value before first interval */
+
+			if(opt->independent) {
+				opt->timer_id = g_timeout_add(opt->refresh_ms, live_tick, opt);
+				continue;
+			}
+
+			master_opts = g_slist_prepend(master_opts, opt);
+			master_ms   = 0 == master_ms ? opt->refresh_ms
+			                             : gcd(master_ms, opt->refresh_ms);
+		}
+	}
+
+	if(!master_opts)
+		return;
+
+	struct master_ctx *ctx = malloc(sizeof(struct master_ctx));
+	if(!ctx) {
+		g_slist_free(master_opts);
+		return;
+	}
+	ctx->interval_ms = master_ms;
+	ctx->opts        = master_opts;
+
+	g_timeout_add(master_ms, master_tick, ctx);
+}
+
 /* valid GFunc signature for g_slist_foreach. builds one GtkMenuItem per
  * option and appends it to the menu. separators are detected by the "--"
  * convention on both name and command fields
@@ -83,6 +204,17 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 
 	if('-' == option->name[0] && '-' == option->command[0]) {
 		menu_item = gtk_separator_menu_item_new();
+	} else if(option->live_cmd) {
+		/* live item — label widget updated by timer */
+		const char *text = option->live_output ? option->live_output : option->name;
+		GtkWidget  *label = gtk_label_new(text);
+		gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+		menu_item = gtk_menu_item_new();
+		gtk_container_add(GTK_CONTAINER(menu_item), label);
+		option->live_label = label;
+		g_signal_connect_swapped(G_OBJECT(menu_item), "destroy",
+					 G_CALLBACK(g_nullify_pointer),
+					 &option->live_label);
 	} else {
 		menu_item = gtk_menu_item_new_with_label(option->name);
 		g_signal_connect(G_OBJECT(menu_item), "activate",
@@ -265,6 +397,9 @@ int main(int argc, char **argv) {
 	}
 
 	all_configs = filter_instance(all_configs, instance_filter);
+
+	for(GSList *l = all_configs; l; l = l->next)
+		start_live_timers((struct config *)l->data);
 
 	/* monitor watches the first config's path — all instances share one file */
 	GFileMonitor *cfg_monitor = monitor_config(cfg_path, (struct config *)all_configs->data);
