@@ -1,5 +1,5 @@
 CC      = gcc
-CFLAGS  = -Wall -Werror -std=gnu11 -Wno-deprecated-declarations -DVERSION=\"2.4.0\"
+CFLAGS  = -Wall -Werror -std=gnu11 -Wno-deprecated-declarations -DVERSION=\"2.5.0\"
 LDFLAGS =
 
 PKG_CFLAGS = $(shell pkg-config --cflags gtk+-3.0)
@@ -118,8 +118,8 @@ app: release
 	<key>CFBundleName</key>            <string>$(APP_NAME)</string>\n\
 	<key>CFBundleExecutable</key>      <string>$(TARGET)</string>\n\
 	<key>CFBundleIconFile</key>        <string>gensystray</string>\n\
-	<key>CFBundleVersion</key>         <string>2.4.0</string>\n\
-	<key>CFBundleShortVersionString</key> <string>2.4.0</string>\n\
+	<key>CFBundleVersion</key>         <string>2.5.0</string>\n\
+	<key>CFBundleShortVersionString</key> <string>2.5.0</string>\n\
 	<key>CFBundlePackageType</key>     <string>APPL</string>\n\
 	<key>CFBundleSignature</key>       <string>????</string>\n\
 	<key>LSUIElement</key>             <true/>\n\

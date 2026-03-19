@@ -136,11 +136,49 @@ static void spawn_commands(GSList *commands) {
 	}
 }
 
+/* fire an emit signal. handles the "global." prefix by switching
+ * to the __global namespace for cross-instance signals.
+ */
+static void fire_emit(const struct emit *em) {
+	if(!em || !em->signal)
+		return;
+
+	if(0 == strncmp(em->signal, "global.", 7)) {
+		ss_data_t data = { .type = SS_TYPE_VOID };
+		if(em->value) {
+			data.type = SS_TYPE_STRING;
+			data.value.s_val = em->value;
+		}
+		ss_emit_namespaced("__global", em->signal, &data);
+	} else {
+		if(em->value)
+			ss_emit_string(em->signal, em->value);
+		else
+			ss_emit_void(em->signal);
+	}
+}
+
+/* context for delegate_system_call_and_emit — carries both commands and emit */
+struct click_ctx {
+	GSList      *commands;
+	struct emit *emit;
+};
+
 /* valid "activate" signal callback. spawns all commands in the list.
  * user_data is GSList* of char** argv entries.
  */
 void delegate_system_call(GtkWidget *widget, gpointer user_data) {
 	spawn_commands((GSList *)user_data);
+}
+
+/* activate callback that also fires an emit signal after spawning commands.
+ * user_data is struct click_ctx*.
+ */
+static void delegate_system_call_and_emit(GtkWidget *widget, gpointer user_data) {
+	struct click_ctx *ctx = (struct click_ctx *)user_data;
+	if(ctx->commands)
+		spawn_commands(ctx->commands);
+	fire_emit(ctx->emit);
 }
 
 /* ss_lib slot — called when a live signal is emitted.
@@ -274,11 +312,14 @@ static void on_update_label_done(GObject *source, GAsyncResult *result,
 		}
 	}
 
-	/* fire on block command only on state transition */
+	/* fire on block command and emit only on state transition */
 	if(matched != opt->live->last_matched) {
 		opt->live->last_matched = matched;
-		if(matched && matched->commands)
-			spawn_commands(matched->commands);
+		if(matched) {
+			if(matched->commands)
+				spawn_commands(matched->commands);
+			fire_emit(matched->emit);
+		}
 	}
 
 	/* determine display label */
@@ -434,27 +475,83 @@ static gboolean main_tick(gpointer user_data) {
 /* ss_lib slot — called when a watch signal is emitted.
  * substitutes {filepath}/{filename} in the command template and spawns it.
  */
+/* spawn a shell command from a template string */
+static void spawn_tpl_command(const char *cmd_str) {
+	if(!cmd_str || '\0' == cmd_str[0])
+		return;
+	char **argv = g_new(char *, 4);
+	argv[0] = g_strdup("sh");
+	argv[1] = g_strdup("-c");
+	argv[2] = g_strdup(cmd_str);
+	argv[3] = NULL;
+	g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
+		      NULL, NULL, NULL, NULL);
+	g_strfreev(argv);
+}
+
 static void on_watch_signal(const ss_data_t *data, void *user_data) {
 	struct on_watch_block *wb = (struct on_watch_block *)user_data;
 	const char *filepath = ss_data_get_string(data);
-	if(!filepath || !wb->command_tpl)
+	if(!filepath)
 		return;
 
 	char *filename = g_path_get_basename(filepath);
-	char *cmd = apply_tpl(wb->command_tpl, filename, filepath, true);
-	g_free(filename);
 
-	if(cmd && '\0' != cmd[0]) {
-		char **argv = g_new(char *, 4);
-		argv[0] = g_strdup("sh");
-		argv[1] = g_strdup("-c");
-		argv[2] = cmd;
-		argv[3] = NULL;
-		g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
-			      NULL, NULL, NULL, NULL);
-		g_strfreev(argv);
-	} else {
+	if(wb->command_tpl) {
+		char *cmd = apply_tpl(wb->command_tpl, filename, filepath, true);
+		spawn_tpl_command(cmd);
 		g_free(cmd);
+	}
+
+	/* fire emit with template substitution on value */
+	if(wb->emit && wb->emit->signal) {
+		char *val = wb->emit->value
+		          ? apply_tpl(wb->emit->value, filename, filepath, false)
+		          : NULL;
+		struct emit resolved = { .signal = wb->emit->signal, .value = val };
+		fire_emit(&resolved);
+		g_free(val);
+	}
+
+	g_free(filename);
+}
+
+/* ss_lib slot — called when a user emit signal is received.
+ * substitutes {value} in command_tpl and spawns it. may chain-emit.
+ */
+static void on_emit_signal(const ss_data_t *data, void *user_data) {
+	struct on_emit_block *eb = (struct on_emit_block *)user_data;
+	const char *value = ss_data_get_string(data);
+	if(!value) value = "";
+
+	if(eb->command_tpl) {
+		/* substitute {value} in command template */
+		char *cmd = g_strdup(eb->command_tpl);
+		if(strstr(cmd, "{value}")) {
+			char **parts = g_strsplit(cmd, "{value}", -1);
+			g_free(cmd);
+			cmd = g_strjoinv(value, parts);
+			g_strfreev(parts);
+		}
+		spawn_tpl_command(cmd);
+		g_free(cmd);
+	}
+
+	/* chain emit — substitute {value} in the chained value */
+	if(eb->emit && eb->emit->signal) {
+		char *val = NULL;
+		if(eb->emit->value) {
+			val = g_strdup(eb->emit->value);
+			if(strstr(val, "{value}")) {
+				char **parts = g_strsplit(val, "{value}", -1);
+				g_free(val);
+				val = g_strjoinv(value, parts);
+				g_strfreev(parts);
+			}
+		}
+		struct emit resolved = { .signal = eb->emit->signal, .value = val };
+		fire_emit(&resolved);
+		g_free(val);
 	}
 }
 
@@ -494,6 +591,21 @@ static void start_live_timers(struct config *config) {
 			                             : gcd(shared_ms, opt->live->refresh_ms);
 		}
 
+		/* register item-level emit signals */
+		for(GSList *ol2 = sec->options; ol2; ol2 = ol2->next) {
+			struct option *opt2 = (struct option *)ol2->data;
+			if(opt2->emit && opt2->emit->signal)
+				ss_signal_register(opt2->emit->signal);
+			/* also register emit signals inside on exit/output blocks */
+			if(opt2->live) {
+				for(GSList *obl = opt2->live->on_blocks; obl; obl = obl->next) {
+					struct on_block *ob = (struct on_block *)obl->data;
+					if(ob->emit && ob->emit->signal)
+						ss_signal_register(ob->emit->signal);
+				}
+			}
+		}
+
 		/* register watch signals for on watch-* blocks */
 		for(GSList *wl = sec->on_watch_blocks; wl; wl = wl->next) {
 			struct on_watch_block *wb = (struct on_watch_block *)wl->data;
@@ -510,6 +622,26 @@ static void start_live_timers(struct config *config) {
 			if(SS_OK != cerr)
 				fprintf(stderr, "gensystray: failed to connect watch signal '%s': %s\n",
 				        wb->signal_name, ss_error_string(cerr));
+			/* also register emit signals from watch on-blocks */
+			if(wb->emit && wb->emit->signal)
+				ss_signal_register(wb->emit->signal);
+		}
+
+		/* register and connect on emit block signals */
+		for(GSList *el = sec->on_emit_blocks; el; el = el->next) {
+			struct on_emit_block *eb = (struct on_emit_block *)el->data;
+			if(!eb->signal_name)
+				continue;
+			/* register the signal the block listens to */
+			ss_signal_register(eb->signal_name);
+			ss_error_t eerr = ss_connect_ex(eb->signal_name, on_emit_signal, eb,
+						        SS_PRIORITY_NORMAL, &eb->conn);
+			if(SS_OK != eerr)
+				fprintf(stderr, "gensystray: failed to connect emit signal '%s': %s\n",
+				        eb->signal_name, ss_error_string(eerr));
+			/* register the chained emit signal if present */
+			if(eb->emit && eb->emit->signal)
+				ss_signal_register(eb->emit->signal);
 		}
 	}
 
@@ -569,6 +701,17 @@ static void stop_live_timers(struct config *config) {
 			}
 			if(wb->signal_name)
 				ss_signal_unregister(wb->signal_name);
+		}
+
+		/* disconnect and unregister emit signals */
+		for(GSList *el = sec->on_emit_blocks; el; el = el->next) {
+			struct on_emit_block *eb = (struct on_emit_block *)el->data;
+			if(0 != eb->conn) {
+				ss_disconnect_handle(eb->conn);
+				eb->conn = 0;
+			}
+			if(eb->signal_name)
+				ss_signal_unregister(eb->signal_name);
 		}
 	}
 }
@@ -730,18 +873,35 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 		option->live->live_label = label;
 		ss_connect_ex(option->live->signal_name, on_live_signal, label,
 			      SS_PRIORITY_NORMAL, &option->live->live_conn);
-		if(option->commands)
+		if(option->emit) {
+			struct click_ctx *ctx = g_new(struct click_ctx, 1);
+			ctx->commands = option->commands;
+			ctx->emit     = option->emit;
+			g_signal_connect_data(G_OBJECT(menu_item), "activate",
+					      G_CALLBACK(delegate_system_call_and_emit),
+					      ctx, (GClosureNotify)g_free, 0);
+		} else if(option->commands) {
 			g_signal_connect(G_OBJECT(menu_item), "activate",
 					 G_CALLBACK(delegate_system_call),
 					 option->commands);
+		}
 		g_signal_connect_swapped(G_OBJECT(menu_item), "destroy",
 					 G_CALLBACK(g_nullify_pointer),
 					 &option->live->live_label);
 	} else {
 		menu_item = gtk_menu_item_new_with_label(option->name);
-		g_signal_connect(G_OBJECT(menu_item), "activate",
-				 G_CALLBACK(delegate_system_call),
-				 option->commands);
+		if(option->emit) {
+			struct click_ctx *ctx = g_new(struct click_ctx, 1);
+			ctx->commands = option->commands;
+			ctx->emit     = option->emit;
+			g_signal_connect_data(G_OBJECT(menu_item), "activate",
+					      G_CALLBACK(delegate_system_call_and_emit),
+					      ctx, (GClosureNotify)g_free, 0);
+		} else {
+			g_signal_connect(G_OBJECT(menu_item), "activate",
+					 G_CALLBACK(delegate_system_call),
+					 option->commands);
+		}
 	}
 
 	gtk_menu_shell_append((GtkMenuShell*)menu, menu_item);

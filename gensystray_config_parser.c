@@ -278,6 +278,51 @@ static GSList *parse_command_list(const ucl_object_t *obj)
 	return argv ? g_slist_append(NULL, argv) : NULL;
 }
 
+/* parse an emit block from a UCL scope. returns NULL if not present or invalid.
+ * context_desc is used in error messages, e.g. "item 'Deploy'" or "on exit 0".
+ */
+static struct emit *parse_emit(const ucl_object_t *scope,
+			       const char *context_desc)
+{
+	const ucl_object_t *emit_obj = ucl_object_lookup(scope, "emit");
+	if(!emit_obj)
+		return NULL;
+
+	if(UCL_OBJECT != ucl_object_type(emit_obj)) {
+		fprintf(stderr, "gensystray: %s: emit must be a block, "
+		        "e.g. emit { signal = \"name\"; value = \"payload\" }\n",
+		        context_desc);
+		return NULL;
+	}
+
+	static const char *known_emit[] = { "signal", "value", NULL };
+	warn_unknown_keys(emit_obj, known_emit, context_desc);
+
+	const ucl_object_t *sig = ucl_object_lookup(emit_obj, "signal");
+	if(!sig) {
+		fprintf(stderr, "gensystray: %s: emit block requires 'signal'\n",
+		        context_desc);
+		return NULL;
+	}
+
+	const char *sig_str = ucl_object_tostring(sig);
+	if(!sig_str || '\0' == sig_str[0]) {
+		fprintf(stderr, "gensystray: %s: emit.signal is empty\n",
+		        context_desc);
+		return NULL;
+	}
+
+	struct emit *em = malloc(sizeof(struct emit));
+	if(!em)
+		return NULL;
+
+	em->signal = strdup(sig_str);
+	const ucl_object_t *val = ucl_object_lookup(emit_obj, "value");
+	em->value = val ? strdup(ucl_object_tostring(val)) : NULL;
+
+	return em;
+}
+
 static int option_order_cmp(gconstpointer a, gconstpointer b) {
 	return ((const struct option *)a)->order - ((const struct option *)b)->order;
 }
@@ -290,11 +335,19 @@ static int option_alpha_cmp(gconstpointer a, gconstpointer b) {
 	return strcmp(((const struct option *)a)->name, ((const struct option *)b)->name);
 }
 
+static void emit_dalloc(struct emit *em) {
+	if(!em) return;
+	free(em->signal);
+	free(em->value);
+	free(em);
+}
+
 static void on_block_dalloc(void *data) {
 	struct on_block *ob = (struct on_block *)data;
 	free(ob->output_match);
 	free(ob->label);
 	command_list_free(ob->commands);
+	emit_dalloc(ob->emit);
 	free(ob);
 }
 
@@ -310,10 +363,19 @@ static void live_dalloc(struct live *lv) {
 	free(lv);
 }
 
+static void on_emit_block_dalloc(void *data) {
+	struct on_emit_block *eb = (struct on_emit_block *)data;
+	free(eb->signal_name);
+	free(eb->command_tpl);
+	emit_dalloc(eb->emit);
+	free(eb);
+}
+
 static void option_dalloc(void *data) {
 	struct option *opt = (struct option *)data;
 	free(opt->name);
 	command_list_free(opt->commands);
+	emit_dalloc(opt->emit);
 	live_dalloc(opt->live);
 	g_slist_free_full(opt->subopts, option_dalloc);
 	free(opt);
@@ -331,6 +393,7 @@ static void populate_dalloc(void *data) {
 static void on_watch_block_dalloc(void *data) {
 	struct on_watch_block *wb = (struct on_watch_block *)data;
 	free(wb->command_tpl);
+	emit_dalloc(wb->emit);
 	free(wb->signal_name);
 	free(wb);
 }
@@ -343,6 +406,8 @@ static void section_dalloc(void *data) {
 	g_slist_free_full(sec->monitors, (GDestroyNotify)g_object_unref);
 	g_slist_free_full(sec->on_watch_blocks,
 			  (GDestroyNotify)on_watch_block_dalloc);
+	g_slist_free_full(sec->on_emit_blocks,
+			  (GDestroyNotify)on_emit_block_dalloc);
 	free(sec);
 }
 
@@ -477,6 +542,7 @@ static GSList *parse_on_blocks(const char *raw_text, const char *item_name)
 		ob->label        = NULL;
 		ob->output_match = NULL;
 		ob->commands     = NULL;
+		ob->emit         = NULL;
 
 		if(is_exit) {
 			p += 7;
@@ -582,6 +648,13 @@ static GSList *parse_on_blocks(const char *raw_text, const char *item_name)
 			const ucl_object_t *cmd = ucl_object_lookup(br, "command");
 			ob->label    = lbl ? strdup(ucl_object_tostring(lbl)) : NULL;
 			ob->commands = parse_command_list(cmd);
+
+			char emit_ctx[128];
+			snprintf(emit_ctx, sizeof(emit_ctx),
+			         "item '%s' > on %s", item_name,
+			         ob->kind == ON_EXIT ? "exit" : "output");
+			ob->emit = parse_emit(br, emit_ctx);
+
 			ucl_object_unref(br);
 		}
 		ucl_parser_free(bp);
@@ -790,9 +863,10 @@ static GSList *parse_on_watch_blocks(const char *raw_text,
 
 		ucl_object_t *br = ucl_parser_get_object(bp);
 		char *command_tpl = NULL;
+		struct emit *wb_emit = NULL;
 		if(br) {
 			static const char *known_watch_body[] = {
-				"command", NULL
+				"command", "emit", NULL
 			};
 			char wbd[128];
 			snprintf(wbd, sizeof(wbd), "section '%s' > on watch-*",
@@ -810,12 +884,13 @@ static GSList *parse_on_watch_blocks(const char *raw_text,
 					        "not an array\n", section_name);
 				}
 			}
+			wb_emit = parse_emit(br, wbd);
 			ucl_object_unref(br);
 		}
 		ucl_parser_free(bp);
 		g_free(body);
 
-		if(!command_tpl)
+		if(!command_tpl && !wb_emit)
 			continue;
 
 		/* build signal name: watch.<section>.<event> */
@@ -833,15 +908,215 @@ static GSList *parse_on_watch_blocks(const char *raw_text,
 		struct on_watch_block *wb = malloc(sizeof(struct on_watch_block));
 		if(!wb) {
 			free(command_tpl);
+			emit_dalloc(wb_emit);
 			free(sig);
 			continue;
 		}
 		wb->kind        = kind;
 		wb->command_tpl = command_tpl;
+		wb->emit        = wb_emit;
 		wb->signal_name = sig;
 		wb->conn        = 0;
 
 		list = g_slist_append(list, wb);
+	}
+
+	return list;
+}
+
+/* parse on emit "signal" { command = "..." } blocks from raw config text
+ * for the named section. {value} token in command is stored as-is and
+ * substituted at event time from the signal payload.
+ *
+ * returns a GSList of struct on_emit_block in declaration order.
+ */
+static GSList *parse_on_emit_blocks(const char *raw_text,
+				    const char *section_name)
+{
+	if(!raw_text || !section_name)
+		return NULL;
+
+	GSList *list = NULL;
+
+	/* locate section "section_name" { in raw text — reuse same pattern */
+	const char *scope_start = NULL;
+	const char *scan = raw_text;
+	for(; '\0' != *scan; ) {
+		for(; ' ' == *scan || '\t' == *scan; scan++) {}
+		if(0 == strncmp(scan, "section", 7)
+		   && (' ' == scan[7] || '\t' == scan[7])) {
+			scan += 7;
+			for(; ' ' == *scan || '\t' == *scan; scan++) {}
+			char delim = '\0';
+			if('"' == *scan || '\'' == *scan)
+				delim = *scan++;
+			const char *ns = scan;
+			if('\0' != delim) {
+				for(; '\0' != *scan && *scan != delim; scan++) {}
+			} else {
+				for(; '\0' != *scan && ' ' != *scan && '\t' != *scan
+				    && '{' != *scan && '\n' != *scan; scan++) {}
+			}
+			size_t nlen = (size_t)(scan - ns);
+			if('\0' != delim && *scan == delim)
+				scan++;
+			if(nlen == strlen(section_name)
+			   && 0 == strncmp(ns, section_name, nlen)) {
+				for(; '\0' != *scan && '{' != *scan && '\n' != *scan; scan++) {}
+				if('{' == *scan)
+					scope_start = scan + 1;
+				break;
+			}
+		}
+		for(; '\0' != *scan && '\n' != *scan; scan++) {}
+		if('\n' == *scan) scan++;
+	}
+
+	if(!scope_start)
+		return NULL;
+
+	int depth = 1;
+	const char *scope_end = scope_start;
+	for(; '\0' != *scope_end && 0 < depth; scope_end++) {
+		if('{' == *scope_end)      depth++;
+		else if('}' == *scope_end) depth--;
+	}
+
+	int line_num = 1;
+	for(const char *c = raw_text; c < scope_start; c++) {
+		if('\n' == *c) line_num++;
+	}
+
+	const char *p = scope_start;
+	for(; p < scope_end && '\0' != *p; ) {
+		for(; p < scope_end && (' ' == *p || '\t' == *p); p++) {}
+
+		/* match "on emit" */
+		if(0 != strncmp(p, "on emit", 7)
+		   || (' ' != p[7] && '\t' != p[7] && '"' != p[7])) {
+			for(; p < scope_end && '\n' != *p; p++) {}
+			if(p < scope_end && '\n' == *p) { p++; line_num++; }
+			continue;
+		}
+
+		int block_line = line_num;
+		p += 7;
+		for(; ' ' == *p || '\t' == *p; p++) {}
+
+		/* extract signal name — must be quoted */
+		if('"' != *p) {
+			fprintf(stderr, "gensystray: line %d: section '%s': "
+			        "'on emit' expects a quoted signal name, "
+			        "e.g. on emit \"signal_name\" { }\n",
+			        block_line, section_name);
+			for(; p < scope_end && '\n' != *p; p++) {}
+			if(p < scope_end && '\n' == *p) { p++; line_num++; }
+			continue;
+		}
+		p++;
+		const char *sig_start = p;
+		for(; '\0' != *p && '"' != *p && '\n' != *p; p++) {}
+		if('"' != *p) {
+			fprintf(stderr, "gensystray: line %d: section '%s': "
+			        "unterminated quote in 'on emit'\n",
+			        block_line, section_name);
+			if(p < scope_end && '\n' == *p) { p++; line_num++; }
+			continue;
+		}
+		char *signal_name = g_strndup(sig_start, (gsize)(p - sig_start));
+		p++; /* skip closing '"' */
+
+		/* skip to opening brace */
+		for(; '\0' != *p && '{' != *p && '\n' != *p; p++) {}
+		if('{' != *p) {
+			fprintf(stderr, "gensystray: line %d: section '%s': "
+			        "'on emit' block missing opening '{'\n",
+			        block_line, section_name);
+			g_free(signal_name);
+			if('\n' == *p) { p++; line_num++; }
+			continue;
+		}
+		p++;
+
+		/* collect brace body */
+		int bdepth = 1;
+		const char *body_start = p;
+		for(; '\0' != *p && 0 < bdepth; p++) {
+			if('{' == *p) bdepth++;
+			else if('}' == *p) bdepth--;
+			else if('\n' == *p) line_num++;
+		}
+
+		if(0 != bdepth) {
+			fprintf(stderr, "gensystray: line %d: section '%s': "
+			        "unclosed '}' in 'on emit' block\n",
+			        block_line, section_name);
+			g_free(signal_name);
+			continue;
+		}
+
+		gsize body_len = (gsize)(p - body_start - 1);
+		char *body = g_strndup(body_start, body_len);
+
+		struct ucl_parser *bp = ucl_parser_new(0);
+		if(!ucl_parser_add_string(bp, body, 0)) {
+			fprintf(stderr, "gensystray: line %d: section '%s': "
+			        "syntax error in 'on emit' block: %s\n",
+			        block_line, section_name,
+			        ucl_parser_get_error(bp));
+			ucl_parser_free(bp);
+			g_free(body);
+			g_free(signal_name);
+			continue;
+		}
+
+		ucl_object_t *br = ucl_parser_get_object(bp);
+		char *command_tpl = NULL;
+		struct emit *eb_emit = NULL;
+		if(br) {
+			static const char *known_emit_body[] = {
+				"command", "emit", NULL
+			};
+			char ebd[128];
+			snprintf(ebd, sizeof(ebd), "section '%s' > on emit",
+			         section_name);
+			warn_unknown_keys(br, known_emit_body, ebd);
+
+			const ucl_object_t *cmd = ucl_object_lookup(br, "command");
+			if(cmd) {
+				const char *s = ucl_object_tostring(cmd);
+				if(s) {
+					command_tpl = strdup(s);
+				} else {
+					fprintf(stderr, "gensystray: section '%s': "
+					        "'on emit' command must be a string\n",
+					        section_name);
+				}
+			}
+			eb_emit = parse_emit(br, ebd);
+			ucl_object_unref(br);
+		}
+		ucl_parser_free(bp);
+		g_free(body);
+
+		if(!command_tpl && !eb_emit) {
+			g_free(signal_name);
+			continue;
+		}
+
+		struct on_emit_block *eb = malloc(sizeof(struct on_emit_block));
+		if(!eb) {
+			free(command_tpl);
+			emit_dalloc(eb_emit);
+			g_free(signal_name);
+			continue;
+		}
+		eb->signal_name = signal_name;
+		eb->command_tpl = command_tpl;
+		eb->emit        = eb_emit;
+		eb->conn        = 0;
+
+		list = g_slist_append(list, eb);
 	}
 
 	return list;
@@ -879,7 +1154,7 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 				opt->name = strdup(key ? key : "");
 
 				static const char *known_item[] = {
-					"separator", "command", "live", "order", NULL
+					"separator", "command", "emit", "live", "order", NULL
 				};
 				char item_desc[128];
 				snprintf(item_desc, sizeof(item_desc), "item '%s'", opt->name);
@@ -890,6 +1165,7 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 					free(opt->name);
 					opt->name     = strdup("--");
 					opt->commands = NULL;
+					opt->emit     = NULL;
 					opt->live     = NULL;
 					opt->subopts          = NULL;
 					opt->subopts_expanded = false;
@@ -900,9 +1176,16 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 
 				const ucl_object_t *cmd = ucl_object_lookup(item, "command");
 				opt->commands = parse_command_list(cmd);
+				opt->emit         = NULL;
 				opt->live         = NULL;
 				opt->subopts          = NULL;
 				opt->subopts_expanded = false;
+
+				{
+					char emit_ctx[128];
+					snprintf(emit_ctx, sizeof(emit_ctx), "item '%s' > emit", opt->name);
+					opt->emit = parse_emit(item, emit_ctx);
+				}
 
 				const ucl_object_t *live_blk = ucl_object_lookup(item, "live");
 				if(live_blk) {
@@ -1373,6 +1656,7 @@ static GSList *parse_sections(const ucl_object_t *scope, struct config *config,
 			anon->populates       = NULL;
 			anon->monitors        = NULL;
 			anon->on_watch_blocks = NULL;
+			anon->on_emit_blocks  = NULL;
 			anon->order           = -1;
 			anon->expanded        = false;
 			anon->show_label      = true;
@@ -1447,8 +1731,9 @@ static GSList *parse_sections(const ucl_object_t *scope, struct config *config,
 					g_free(base);
 				}
 
-				/* parse on watch-* blocks from raw text */
+				/* parse on watch-* and on emit blocks from raw text */
 				sec->on_watch_blocks = parse_on_watch_blocks(raw_text, sec->label);
+				sec->on_emit_blocks  = parse_on_emit_blocks(raw_text, sec->label);
 
 				/* validate: on watch-* blocks require at least one populate
 				 * with watch = true, otherwise the events will never fire
@@ -1619,7 +1904,8 @@ GSList *load_config(const char *config_path) {
 			          || (0 == strncmp(q, "on output", 9) && (' ' == q[9]  || '\t' == q[9] || '"' == q[9]))
 			          || (0 == strncmp(q, "on watch-change", 15) && (' ' == q[15] || '\t' == q[15] || '{' == q[15]))
 			          || (0 == strncmp(q, "on watch-create", 15) && (' ' == q[15] || '\t' == q[15] || '{' == q[15]))
-			          || (0 == strncmp(q, "on watch-delete", 15) && (' ' == q[15] || '\t' == q[15] || '{' == q[15]));
+			          || (0 == strncmp(q, "on watch-delete", 15) && (' ' == q[15] || '\t' == q[15] || '{' == q[15]))
+			          || (0 == strncmp(q, "on emit", 7) && (' ' == q[7] || '\t' == q[7] || '"' == q[7]));
 			if(is_on) {
 				/* blank until we find '{', then blank the whole braced body */
 				for(; '\0' != *q && '{' != *q && '\n' != *q; q++)

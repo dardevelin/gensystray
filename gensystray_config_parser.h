@@ -52,6 +52,7 @@ struct on_block {
 	char    *output_match; /* ON_OUTPUT: substring to match in stdout */
 	char    *label;        /* display label override, NULL = raw stdout */
 	GSList  *commands;     /* list of char** argv, fired on transition */
+	struct emit *emit;     /* signal to emit on transition, NULL if none */
 };
 
 /* live block — timer-driven behavior for an item.
@@ -77,9 +78,19 @@ struct live {
 	void            *owner;        /* struct config * that owns this live item */
 };
 
+/* emit block — fires an ss_lib signal when the item is clicked.
+ * signal: the signal name (prefixed "global." for cross-instance).
+ * value: the string payload passed to slots, NULL for fire-and-forget.
+ */
+struct emit {
+	char *signal;   /* signal name, "global." prefix = cross-instance */
+	char *value;    /* string payload, NULL = void emit */
+};
+
 struct option {
 	char       *name;
 	GSList     *commands;        /* list of char** argv, click actions, NULL if none */
+	struct emit *emit;           /* NULL if no emit block */
 	int         order;           /* -1 = unordered (declaration order) */
 	struct live *live;           /* NULL for static items */
 	GSList     *subopts;         /* child options for hierarchy submenus, NULL if leaf */
@@ -127,7 +138,20 @@ typedef enum {
 struct on_watch_block {
 	on_watch_kind    kind;
 	char            *command_tpl;   /* raw command template, substituted at event time */
+	struct emit     *emit;          /* signal to emit on event, NULL if none */
 	char            *signal_name;   /* ss_lib signal, e.g. "watch.notes.change" */
+	ss_connection_t  conn;          /* ss_lib connection handle, 0 = not connected */
+};
+
+/* a single on emit block inside a section.
+ * listens for a named signal and fires a command when received.
+ * {value} token in command_tpl is substituted with the signal payload.
+ * signal_name prefixed with "global." uses the __global namespace.
+ */
+struct on_emit_block {
+	char            *signal_name;   /* signal to listen for */
+	char            *command_tpl;   /* command template with {value} token */
+	struct emit     *emit;          /* signal to emit (chaining), NULL if none */
 	ss_connection_t  conn;          /* ss_lib connection handle, 0 = not connected */
 };
 
@@ -144,6 +168,7 @@ struct section {
 	GSList *populates;           /* struct populate list for dynamic sources */
 	GSList *monitors;            /* GFileMonitor* list for watched sources */
 	GSList *on_watch_blocks;     /* struct on_watch_block list for watch events */
+	GSList *on_emit_blocks;      /* struct on_emit_block list for emit events */
 	int     order;               /* -1 = unordered (declaration order) */
 	bool    expanded;            /* false = submenu (default), true = inline */
 	bool    hierarchy_expanded;  /* true = hierarchy subdirs render flat, false = collapsed submenus */
