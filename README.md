@@ -1,4 +1,4 @@
-# GenSysTray 2.1.0
+# GenSysTray 2.2.0
 
 A configurable system tray utility written in C. Click a tray icon to get a menu of commands.
 
@@ -215,6 +215,28 @@ item "Service" {
 - `label` overrides the displayed text for that state
 - `command` (optional) runs once when entering that state, supports all
   command forms including multiple commands
+
+### Live tray icon
+
+`update_tray_icon` runs a command on each tick. Its stdout becomes the new
+tray icon path, overriding the parsed default until the next config reload.
+An empty or failed stdout leaves the icon unchanged. The icon resets to the
+config default on reload.
+
+```hcl
+# cycle through icons based on a runtime condition
+item "Status" {
+  live {
+    refresh          = "5s"
+    update_label     = "my-status-script --label"
+    update_tray_icon = "my-status-script --icon"
+  }
+}
+```
+
+The icon path rules are the same as the `tray { icon = ... }` field:
+`./file.png`, `/abs/path.png`, `~/path.png` load as files; bare names like
+`"battery-low"` are XDG theme icon names.
 
 ### Sections
 

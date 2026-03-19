@@ -47,6 +47,9 @@
 - `size-changed` signal reloads pixbuf at exact tray-requested size (22, 24, 32px)
 - XDG theme icon names (`"battery"`, `"network-wireless"`) via gtk_status_icon_new_from_icon_name
 - Fallback to `application-x-executable` theme icon when no icon specified
+- `icon_path_current` — runtime-mutable icon path, initialized from config, overridable by live commands
+- `update_tray_icon` in live block — stdout of command sets `icon_path_current` each tick
+- Icon resets to config default on reload; fallback chain: current → parsed default → system icon
 
 ### Build
 - Cross-platform: macOS (Clang + ObjC NSEvent monitor) and Linux (GCC + GTK stub)
@@ -62,6 +65,8 @@
 - `commands.cfg` — string, array, and multi-command items
 - `glob_populate.cfg` — populate from filesystem glob
 - `live_on_blocks.cfg` — clock variants, independent timer, on exit/output blocks
+- `tray_icon_reload.cfg` — hot-reload tray icon by editing config and saving
+- `live_tray_icon.cfg` — live command drives tray icon path each tick
 
 ---
 
@@ -78,6 +83,7 @@
 - Currently exits when last instance menu is dismissed
 
 ### Live items (future)
+- `toggle` syntax in live blocks — flip between two states (label, icon, command) each tick or on condition
 - `populate { from = "live" }` — stdout lines as dynamic section entries
 - `populate { from = "ipc" }` — external process pushes entries over socket
 
