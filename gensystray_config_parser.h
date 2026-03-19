@@ -112,6 +112,25 @@ struct populate {
 	bool   hierarchy_expanded; /* true = subdir submenus render flat, false = collapsed (default) */
 };
 
+/* watch event kinds — maps GFileMonitorEvent to user-facing on blocks */
+typedef enum {
+	ON_WATCH_CHANGE,   /* CHANGES_DONE_HINT — file content finished writing */
+	ON_WATCH_CREATE,   /* CREATED — new file appeared */
+	ON_WATCH_DELETE,   /* DELETED — file removed */
+} on_watch_kind;
+
+/* a single on watch-* block inside a section.
+ * command_tpl is a template string with {filepath}/{filename} tokens,
+ * substituted at event time from the GFileMonitor callback path.
+ * signal_name is registered/connected via ss_lib at startup.
+ */
+struct on_watch_block {
+	on_watch_kind    kind;
+	char            *command_tpl;   /* raw command template, substituted at event time */
+	char            *signal_name;   /* ss_lib signal, e.g. "watch.notes.change" */
+	ss_connection_t  conn;          /* ss_lib connection handle, 0 = not connected */
+};
+
 /* a section is a named submenu containing a list of options.
  * label == NULL means an anonymous (flat) section — top-level items.
  * ordering among sections follows the same rules as options:
@@ -124,6 +143,7 @@ struct section {
 	GSList *options;             /* expanded struct option list */
 	GSList *populates;           /* struct populate list for dynamic sources */
 	GSList *monitors;            /* GFileMonitor* list for watched sources */
+	GSList *on_watch_blocks;     /* struct on_watch_block list for watch events */
 	int     order;               /* -1 = unordered (declaration order) */
 	bool    expanded;            /* false = submenu (default), true = inline */
 	bool    hierarchy_expanded;  /* true = hierarchy subdirs render flat, false = collapsed submenus */
@@ -174,5 +194,12 @@ void free_config_data(struct config *config);
  * configs that have never had runtime state attached.
  */
 void free_configs(GSList *configs);
+
+/* apply {filename} and {filepath} template substitution.
+ * if for_shell is true, values are single-quoted for safe use in sh -c.
+ * returns a g_malloc'd string, caller must g_free.
+ */
+char *apply_tpl(const char *tpl, const char *filename,
+		const char *filepath, bool for_shell);
 
 #endif

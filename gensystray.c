@@ -431,6 +431,33 @@ static gboolean main_tick(gpointer user_data) {
 	return TRUE;
 }
 
+/* ss_lib slot — called when a watch signal is emitted.
+ * substitutes {filepath}/{filename} in the command template and spawns it.
+ */
+static void on_watch_signal(const ss_data_t *data, void *user_data) {
+	struct on_watch_block *wb = (struct on_watch_block *)user_data;
+	const char *filepath = ss_data_get_string(data);
+	if(!filepath || !wb->command_tpl)
+		return;
+
+	char *filename = g_path_get_basename(filepath);
+	char *cmd = apply_tpl(wb->command_tpl, filename, filepath, true);
+	g_free(filename);
+
+	if(cmd && '\0' != cmd[0]) {
+		char **argv = g_new(char *, 4);
+		argv[0] = g_strdup("sh");
+		argv[1] = g_strdup("-c");
+		argv[2] = cmd;
+		argv[3] = NULL;
+		g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
+			      NULL, NULL, NULL, NULL);
+		g_strfreev(argv);
+	} else {
+		g_free(cmd);
+	}
+}
+
 /* start timers for all live options across all sections of config.
  * independent items get their own g_timeout_add timer.
  * all other live items share one main tick at GCD of their refresh intervals.
@@ -462,6 +489,16 @@ static void start_live_timers(struct config *config) {
 			shared_opts = g_slist_prepend(shared_opts, opt);
 			shared_ms   = 0 == shared_ms ? opt->live->refresh_ms
 			                             : gcd(shared_ms, opt->live->refresh_ms);
+		}
+
+		/* register watch signals for on watch-* blocks */
+		for(GSList *wl = sec->on_watch_blocks; wl; wl = wl->next) {
+			struct on_watch_block *wb = (struct on_watch_block *)wl->data;
+			if(wb->signal_name) {
+				ss_signal_register(wb->signal_name);
+				ss_connect_ex(wb->signal_name, on_watch_signal, wb,
+					      SS_PRIORITY_NORMAL, &wb->conn);
+			}
 		}
 	}
 
@@ -510,6 +547,17 @@ static void stop_live_timers(struct config *config) {
 				opt->live->timer_id = 0;
 			}
 			ss_signal_unregister(opt->live->signal_name);
+		}
+
+		/* disconnect and unregister watch signals */
+		for(GSList *wl = sec->on_watch_blocks; wl; wl = wl->next) {
+			struct on_watch_block *wb = (struct on_watch_block *)wl->data;
+			if(0 != wb->conn) {
+				ss_disconnect_handle(wb->conn);
+				wb->conn = 0;
+			}
+			if(wb->signal_name)
+				ss_signal_unregister(wb->signal_name);
 		}
 	}
 }

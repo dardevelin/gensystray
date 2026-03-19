@@ -323,12 +323,21 @@ static void populate_dalloc(void *data) {
 	free(pop);
 }
 
+static void on_watch_block_dalloc(void *data) {
+	struct on_watch_block *wb = (struct on_watch_block *)data;
+	free(wb->command_tpl);
+	free(wb->signal_name);
+	free(wb);
+}
+
 static void section_dalloc(void *data) {
 	struct section *sec = (struct section *)data;
 	free(sec->label);
 	g_slist_free_full(sec->options, option_dalloc);
 	g_slist_free_full(sec->populates, populate_dalloc);
 	g_slist_free_full(sec->monitors, (GDestroyNotify)g_object_unref);
+	g_slist_free_full(sec->on_watch_blocks,
+			  (GDestroyNotify)on_watch_block_dalloc);
 	free(sec);
 }
 
@@ -579,6 +588,252 @@ static GSList *parse_on_blocks(const char *raw_text, const char *item_name)
 	return list;
 }
 
+/* parse on watch-* blocks from raw config text for the named section.
+ *
+ * scans the raw text for the section's brace region, then looks for:
+ *   on watch-change  { command = "..." }
+ *   on watch-create  { command = "..." }
+ *   on watch-delete  { command = "..." }
+ *
+ * unknown "on watch-*" suffixes produce a warning.
+ * unknown "on <other>" keywords inside sections are warned too.
+ * {filepath} and {filename} tokens in command are stored as-is
+ * and substituted at event time.
+ *
+ * returns a GSList of struct on_watch_block in declaration order.
+ */
+static GSList *parse_on_watch_blocks(const char *raw_text,
+				     const char *section_name)
+{
+	if(!raw_text || !section_name)
+		return NULL;
+
+	GSList *list = NULL;
+
+	/* locate section "section_name" { in raw text */
+	const char *scope_start = NULL;
+	const char *scan = raw_text;
+	for(; '\0' != *scan; ) {
+		for(; ' ' == *scan || '\t' == *scan; scan++) {}
+
+		if(0 == strncmp(scan, "section", 7)
+		   && (' ' == scan[7] || '\t' == scan[7])) {
+			scan += 7;
+			for(; ' ' == *scan || '\t' == *scan; scan++) {}
+			char delim = '\0';
+			if('"' == *scan || '\'' == *scan)
+				delim = *scan++;
+			const char *ns = scan;
+			if('\0' != delim) {
+				for(; '\0' != *scan && *scan != delim; scan++) {}
+			} else {
+				for(; '\0' != *scan && ' ' != *scan && '\t' != *scan
+				    && '{' != *scan && '\n' != *scan; scan++) {}
+			}
+			size_t nlen = (size_t)(scan - ns);
+			if('\0' != delim && *scan == delim)
+				scan++;
+			if(nlen == strlen(section_name)
+			   && 0 == strncmp(ns, section_name, nlen)) {
+				for(; '\0' != *scan && '{' != *scan && '\n' != *scan; scan++) {}
+				if('{' == *scan)
+					scope_start = scan + 1;
+				break;
+			}
+		}
+
+		for(; '\0' != *scan && '\n' != *scan; scan++) {}
+		if('\n' == *scan) scan++;
+	}
+
+	if(!scope_start)
+		return NULL;
+
+	/* find end of section brace region */
+	int depth = 1;
+	const char *scope_end = scope_start;
+	for(; '\0' != *scope_end && 0 < depth; scope_end++) {
+		if('{' == *scope_end)      depth++;
+		else if('}' == *scope_end) depth--;
+	}
+
+	/* count lines for error reporting */
+	int line_num = 1;
+	for(const char *c = raw_text; c < scope_start; c++) {
+		if('\n' == *c) line_num++;
+	}
+
+	/* scan section region for "on watch-*" lines */
+	const char *p = scope_start;
+	for(; p < scope_end && '\0' != *p; ) {
+		for(; p < scope_end && (' ' == *p || '\t' == *p); p++) {}
+
+		/* match "on " prefix */
+		if(0 != strncmp(p, "on ", 3) && 0 != strncmp(p, "on\t", 3)) {
+			for(; p < scope_end && '\n' != *p; p++) {}
+			if(p < scope_end && '\n' == *p) { p++; line_num++; }
+			continue;
+		}
+
+		int block_line = line_num;
+		p += 3;
+		for(; ' ' == *p || '\t' == *p; p++) {}
+
+		/* skip known item-level on blocks (handled by parse_on_blocks) */
+		if(0 == strncmp(p, "exit", 4) && (' ' == p[4] || '\t' == p[4])) {
+			for(; p < scope_end && '\n' != *p; p++) {}
+			if(p < scope_end && '\n' == *p) { p++; line_num++; }
+			continue;
+		}
+		if(0 == strncmp(p, "output", 6)
+		   && (' ' == p[6] || '\t' == p[6] || '"' == p[6])) {
+			for(; p < scope_end && '\n' != *p; p++) {}
+			if(p < scope_end && '\n' == *p) { p++; line_num++; }
+			continue;
+		}
+
+		/* identify watch-* kind */
+		on_watch_kind kind;
+		bool matched = false;
+		if(0 == strncmp(p, "watch-change", 12)
+		   && (' ' == p[12] || '\t' == p[12] || '{' == p[12])) {
+			kind = ON_WATCH_CHANGE;
+			p += 12;
+			matched = true;
+		} else if(0 == strncmp(p, "watch-create", 12)
+		          && (' ' == p[12] || '\t' == p[12] || '{' == p[12])) {
+			kind = ON_WATCH_CREATE;
+			p += 12;
+			matched = true;
+		} else if(0 == strncmp(p, "watch-delete", 12)
+		          && (' ' == p[12] || '\t' == p[12] || '{' == p[12])) {
+			kind = ON_WATCH_DELETE;
+			p += 12;
+			matched = true;
+		} else if(0 == strncmp(p, "watch-", 6)) {
+			/* unknown watch- suffix */
+			const char *ws = p;
+			for(; p < scope_end && ' ' != *p && '\t' != *p
+			    && '{' != *p && '\n' != *p; p++) {}
+			fprintf(stderr, "gensystray: line %d: section '%s': "
+			        "unknown 'on %.*s' (expected watch-change, "
+			        "watch-create, or watch-delete)\n",
+			        block_line, section_name, (int)(p - ws), ws);
+			for(; p < scope_end && '\n' != *p; p++) {}
+			if(p < scope_end && '\n' == *p) { p++; line_num++; }
+			continue;
+		} else {
+			/* unknown on keyword entirely */
+			const char *ws = p;
+			for(; p < scope_end && ' ' != *p && '\t' != *p
+			    && '{' != *p && '\n' != *p; p++) {}
+			fprintf(stderr, "gensystray: line %d: section '%s': "
+			        "unknown 'on %.*s' (ignored)\n",
+			        block_line, section_name, (int)(p - ws), ws);
+			for(; p < scope_end && '\n' != *p; p++) {}
+			if(p < scope_end && '\n' == *p) { p++; line_num++; }
+			continue;
+		}
+
+		if(!matched) {
+			for(; p < scope_end && '\n' != *p; p++) {}
+			if(p < scope_end && '\n' == *p) { p++; line_num++; }
+			continue;
+		}
+
+		/* skip to opening brace */
+		for(; '\0' != *p && '{' != *p && '\n' != *p; p++) {}
+		if('{' != *p) {
+			fprintf(stderr, "gensystray: line %d: section '%s': "
+			        "'on watch-*' block missing opening '{'\n",
+			        block_line, section_name);
+			if('\n' == *p) { p++; line_num++; }
+			continue;
+		}
+		p++;
+
+		/* collect brace body */
+		int bdepth = 1;
+		const char *body_start = p;
+		for(; '\0' != *p && 0 < bdepth; p++) {
+			if('{' == *p) bdepth++;
+			else if('}' == *p) bdepth--;
+			else if('\n' == *p) line_num++;
+		}
+
+		if(0 != bdepth) {
+			fprintf(stderr, "gensystray: line %d: section '%s': "
+			        "unclosed '}' in 'on watch-*' block\n",
+			        block_line, section_name);
+			continue;
+		}
+
+		gsize body_len = (gsize)(p - body_start - 1);
+		char *body = g_strndup(body_start, body_len);
+
+		/* parse body with UCL for the command field */
+		struct ucl_parser *bp = ucl_parser_new(0);
+		if(!ucl_parser_add_string(bp, body, 0)) {
+			fprintf(stderr, "gensystray: line %d: section '%s': "
+			        "syntax error in 'on watch-*' block: %s\n",
+			        block_line, section_name,
+			        ucl_parser_get_error(bp));
+			ucl_parser_free(bp);
+			g_free(body);
+			continue;
+		}
+
+		ucl_object_t *br = ucl_parser_get_object(bp);
+		char *command_tpl = NULL;
+		if(br) {
+			static const char *known_watch_body[] = {
+				"command", NULL
+			};
+			char wbd[128];
+			snprintf(wbd, sizeof(wbd), "section '%s' > on watch-*",
+			         section_name);
+			warn_unknown_keys(br, known_watch_body, wbd);
+
+			const ucl_object_t *cmd = ucl_object_lookup(br, "command");
+			if(cmd)
+				command_tpl = strdup(ucl_object_tostring(cmd));
+			ucl_object_unref(br);
+		}
+		ucl_parser_free(bp);
+		g_free(body);
+
+		if(!command_tpl)
+			continue;
+
+		/* build signal name: watch.<section>.<event> */
+		char *sec_san = sanitize_signal_name(section_name);
+		const char *event_str = kind == ON_WATCH_CHANGE ? "change"
+		                      : kind == ON_WATCH_CREATE ? "create"
+		                      : "delete";
+		size_t slen = strlen("watch.") + strlen(sec_san)
+		            + 1 + strlen(event_str) + 1;
+		char *sig = malloc(slen);
+		if(sig)
+			snprintf(sig, slen, "watch.%s.%s", sec_san, event_str);
+		free(sec_san);
+
+		struct on_watch_block *wb = malloc(sizeof(struct on_watch_block));
+		if(!wb) {
+			free(command_tpl);
+			free(sig);
+			continue;
+		}
+		wb->kind        = kind;
+		wb->command_tpl = command_tpl;
+		wb->signal_name = sig;
+		wb->conn        = 0;
+
+		list = g_slist_append(list, wb);
+	}
+
+	return list;
+}
+
 /* parse item blocks from a UCL scope into a GSList of struct option.
  * named sections sort alphabetically; anonymous sections use declaration order.
  * across sections: explicit order first, then declaration order.
@@ -744,8 +999,8 @@ static char *shell_quote(const char *s)
  * {filepath} values are single-quoted for safe use inside sh -c so
  * spaces and special characters in paths do not cause splitting.
  */
-static char *apply_tpl(const char *tpl, const char *filename,
-		       const char *filepath, bool for_shell)
+char *apply_tpl(const char *tpl, const char *filename,
+		const char *filepath, bool for_shell)
 {
 	char *result = g_strdup(tpl);
 
@@ -897,17 +1152,20 @@ static GSList *expand_glob(const struct populate *pop)
 	return g_slist_sort(opts, option_alpha_cmp);
 }
 
-/* GFileMonitor callback — re-expands the section's populate source on change */
+/* GFileMonitor callback — re-expands the section's populate source on change
+ * and emits ss_lib signals for any matching on watch-* blocks.
+ */
 static void on_glob_changed(GFileMonitor *mon, GFile *file, GFile *other,
 			    GFileMonitorEvent event, gpointer user_data)
 {
-	(void)mon; (void)file; (void)other; (void)event;
+	(void)mon; (void)other;
 
 	struct monitor_ctx *ctx = (struct monitor_ctx *)user_data;
 
 	if(ctx->config->reload_gen != ctx->gen)
 		return;
 
+	/* re-expand section options */
 	g_slist_free_full(ctx->sec->options, option_dalloc);
 	ctx->sec->options = NULL;
 
@@ -916,6 +1174,36 @@ static void on_glob_changed(GFileMonitor *mon, GFile *file, GFile *other,
 		if(0 == strcmp(pop->from, "glob"))
 			ctx->sec->options = g_slist_concat(ctx->sec->options,
 							   expand_glob(pop));
+	}
+
+	/* map GFileMonitorEvent to on_watch_kind and emit signals */
+	on_watch_kind kind;
+	bool has_kind = true;
+	switch(event) {
+	case G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT:
+		kind = ON_WATCH_CHANGE;
+		break;
+	case G_FILE_MONITOR_EVENT_CREATED:
+		kind = ON_WATCH_CREATE;
+		break;
+	case G_FILE_MONITOR_EVENT_DELETED:
+		kind = ON_WATCH_DELETE;
+		break;
+	default:
+		has_kind = false;
+		break;
+	}
+
+	if(has_kind && ctx->sec->on_watch_blocks) {
+		char *filepath = g_file_get_path(file);
+		if(filepath) {
+			for(GSList *wl = ctx->sec->on_watch_blocks; wl; wl = wl->next) {
+				struct on_watch_block *wb = (struct on_watch_block *)wl->data;
+				if(wb->kind == kind && wb->signal_name)
+					ss_emit_string(wb->signal_name, filepath);
+			}
+			g_free(filepath);
+		}
 	}
 }
 
@@ -1067,14 +1355,15 @@ static GSList *parse_sections(const ucl_object_t *scope, struct config *config,
 	if(flat_opts) {
 		struct section *anon = malloc(sizeof(struct section));
 		if(anon) {
-			anon->label      = NULL;
-			anon->options    = flat_opts;
-			anon->populates  = NULL;
-			anon->monitors   = NULL;
-			anon->order      = -1;
-			anon->expanded   = false;
-			anon->show_label = true;
-			anon->separators = SEPARATORS_BOTH;
+			anon->label           = NULL;
+			anon->options         = flat_opts;
+			anon->populates       = NULL;
+			anon->monitors        = NULL;
+			anon->on_watch_blocks = NULL;
+			anon->order           = -1;
+			anon->expanded        = false;
+			anon->show_label      = true;
+			anon->separators      = SEPARATORS_BOTH;
 			unordered = g_slist_prepend(unordered, anon);
 		}
 	}
@@ -1143,6 +1432,31 @@ static GSList *parse_sections(const ucl_object_t *scope, struct config *config,
 					g_free(dir_path);
 					watch_dir(base, sec, config, pop, pop->depth);
 					g_free(base);
+				}
+
+				/* parse on watch-* blocks from raw text */
+				sec->on_watch_blocks = parse_on_watch_blocks(raw_text, sec->label);
+
+				/* validate: on watch-* blocks require at least one populate
+				 * with watch = true, otherwise the events will never fire
+				 */
+				if(sec->on_watch_blocks) {
+					bool has_watch = false;
+					for(GSList *pl = sec->populates; pl; pl = pl->next) {
+						struct populate *pop = (struct populate *)pl->data;
+						if(pop->watch) {
+							has_watch = true;
+							break;
+						}
+					}
+					if(!has_watch) {
+						fprintf(stderr, "gensystray: section '%s': "
+						        "'on watch-*' blocks require a populate "
+						        "with watch = true\n", sec->label);
+						g_slist_free_full(sec->on_watch_blocks,
+						                  on_watch_block_dalloc);
+						sec->on_watch_blocks = NULL;
+					}
 				}
 
 				const ucl_object_t *sp = ucl_object_lookup(sec_obj, "separators");
@@ -1289,7 +1603,10 @@ GSList *load_config(const char *config_path) {
 			/* skip leading whitespace */
 			for(; ' ' == *q || '\t' == *q; q++) {}
 			bool is_on = (0 == strncmp(q, "on exit",   7) && (' ' == q[7]  || '\t' == q[7]))
-			          || (0 == strncmp(q, "on output", 9) && (' ' == q[9]  || '\t' == q[9] || '"' == q[9]));
+			          || (0 == strncmp(q, "on output", 9) && (' ' == q[9]  || '\t' == q[9] || '"' == q[9]))
+			          || (0 == strncmp(q, "on watch-change", 15) && (' ' == q[15] || '\t' == q[15] || '{' == q[15]))
+			          || (0 == strncmp(q, "on watch-create", 15) && (' ' == q[15] || '\t' == q[15] || '{' == q[15]))
+			          || (0 == strncmp(q, "on watch-delete", 15) && (' ' == q[15] || '\t' == q[15] || '{' == q[15]));
 			if(is_on) {
 				/* blank until we find '{', then blank the whole braced body */
 				for(; '\0' != *q && '{' != *q && '\n' != *q; q++)
