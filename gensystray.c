@@ -32,6 +32,9 @@
 /* macOS global event monitor for menu dismissal outside GTK windows */
 #include "gensystray_osx_menu.h"
 
+/* signal-slot dispatch for live items and IPC */
+#include "deps/ss_lib/include/ss_lib.h"
+
 
 /* global list of all loaded instances — used by popdown_all_menus and
  * check_all_exited to coordinate across instances without passing state
@@ -72,15 +75,25 @@ void delegate_system_call(GtkWidget *widget, gpointer user_data) {
 	g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL);
 }
 
+/* ss_lib slot — called when a live signal is emitted.
+ * updates the GtkLabel widget with the new output string.
+ */
+static void on_live_signal(const ss_data_t *data, void *user_data) {
+	GtkWidget  *label  = (GtkWidget *)user_data;
+	const char *output = ss_data_get_string(data);
+	if(label && output)
+		gtk_label_set_text(GTK_LABEL(label), output);
+}
+
 /* run opt->live_cmd synchronously, capture first line of stdout,
- * update opt->live_output, and refresh the label widget if open.
+ * update opt->live_output, emit via ss_lib signal.
  * returns TRUE so g_timeout_add keeps firing.
  */
 static gboolean live_tick(gpointer user_data) {
 	struct option *opt = (struct option *)user_data;
 
-	char *out  = NULL;
-	char *err  = NULL;
+	char *out    = NULL;
+	char *err    = NULL;
 	int   status = 0;
 	char *argv[] = { "sh", "-c", opt->live_cmd, NULL };
 
@@ -107,8 +120,8 @@ static gboolean live_tick(gpointer user_data) {
 	free(opt->live_output);
 	opt->live_output = strdup(out ? out : "");
 
-	if(opt->live_label)
-		gtk_label_set_text(GTK_LABEL(opt->live_label), opt->live_output);
+	/* emit — slots (label widgets) receive the update if connected */
+	ss_emit_string(opt->signal_name, opt->live_output);
 
 	g_free(out);
 	g_free(err);
@@ -159,12 +172,17 @@ static void start_live_timers(struct config *config) {
 	GSList *master_opts = NULL;
 	guint   master_ms   = 0;
 
+	/* set ss_lib namespace to instance name for signal scoping */
+	ss_set_namespace(config->name ? config->name : "default");
+
 	for(GSList *sl = config->sections; sl; sl = sl->next) {
 		struct section *sec = (struct section *)sl->data;
 		for(GSList *ol = sec->options; ol; ol = ol->next) {
 			struct option *opt = (struct option *)ol->data;
 			if(!opt->live_cmd)
 				continue;
+
+			ss_signal_register(opt->signal_name);
 
 			live_tick(opt);   /* initial value before first interval */
 
@@ -205,13 +223,15 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 	if('-' == option->name[0] && '-' == option->command[0]) {
 		menu_item = gtk_separator_menu_item_new();
 	} else if(option->live_cmd) {
-		/* live item — label widget updated by timer */
+		/* live item — label widget connected as ss_lib slot while menu is open */
 		const char *text = option->live_output ? option->live_output : option->name;
 		GtkWidget  *label = gtk_label_new(text);
 		gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
 		menu_item = gtk_menu_item_new();
 		gtk_container_add(GTK_CONTAINER(menu_item), label);
 		option->live_label = label;
+		ss_connect_ex(option->signal_name, on_live_signal, label,
+			      SS_PRIORITY_NORMAL, &option->live_conn);
 		g_signal_connect_swapped(G_OBJECT(menu_item), "destroy",
 					 G_CALLBACK(g_nullify_pointer),
 					 &option->live_label);
@@ -224,6 +244,20 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 
 	gtk_menu_shell_append((GtkMenuShell*)menu, menu_item);
 	gtk_widget_show_all(GTK_WIDGET(menu));
+}
+
+/* disconnect all live ss_lib slots for a config when menu closes */
+static void disconnect_live_slots(struct config *config) {
+	for(GSList *sl = config->sections; sl; sl = sl->next) {
+		struct section *sec = (struct section *)sl->data;
+		for(GSList *ol = sec->options; ol; ol = ol->next) {
+			struct option *opt = (struct option *)ol->data;
+			if(!opt->live_cmd || 0 == opt->live_conn)
+				continue;
+			ss_disconnect_handle(opt->live_conn);
+			opt->live_conn = 0;
+		}
+	}
 }
 
 /* hides and releases the tray icon for this instance, then checks if all
@@ -311,6 +345,8 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 				 G_CALLBACK(g_nullify_pointer), &config->menu);
 	g_signal_connect_swapped(G_OBJECT(menu), "deactivate",
 				 G_CALLBACK(osx_menu_unwatch), menu);
+	g_signal_connect_swapped(G_OBJECT(menu), "deactivate",
+				 G_CALLBACK(disconnect_live_slots), config);
 
 	gtk_menu_popup((GtkMenu*)menu, NULL, NULL,
 		       gtk_status_icon_position_menu, icon,
@@ -372,6 +408,7 @@ static GtkStatusIcon *init_tray(struct config *config) {
 }
 
 int main(int argc, char **argv) {
+	ss_init();
 	gtk_init(&argc, &argv);
 
 	/* parse --instance <name> before gtk consumes argv */
@@ -416,6 +453,7 @@ int main(int argc, char **argv) {
 	}
 	free_configs(all_configs);
 	g_object_unref(cfg_monitor);
+	ss_cleanup();
 
 	return 0;
 }

@@ -56,6 +56,72 @@ char *get_config_path(void) {
 	return path;
 }
 
+/* sanitize a string into a signal name segment.
+ * rules: ASCII special chars → '_' (collapsed), ASCII letters lowercased,
+ * non-ASCII bytes passed through as-is (UTF-8 safe), leading/trailing '_' stripped.
+ * examples: "CPU Usage" → "cpu_usage", "Déjà vu" → "déjà_vu", "battery %" → "battery"
+ * returns a malloc'd string, caller must free.
+ */
+static char *sanitize_signal_name(const char *s)
+{
+	if(!s || '\0' == s[0])
+		return strdup("unnamed");
+
+	size_t len = strlen(s);
+	char  *buf = malloc(len + 1);
+	if(!buf)
+		return strdup("unnamed");
+
+	size_t out  = 0;
+	bool   prev = false;   /* true if last written char was '_' */
+
+	for(size_t i = 0; i < len; i++) {
+		unsigned char c = (unsigned char)s[i];
+
+		if(127 < c) {
+			buf[out++] = (char)c;
+			prev = false;
+			continue;
+		}
+
+		if('a' <= c && c <= 'z') {
+			buf[out++] = (char)c;
+			prev = false;
+			continue;
+		}
+
+		if('0' <= c && c <= '9') {
+			buf[out++] = (char)c;
+			prev = false;
+			continue;
+		}
+
+		if('A' <= c && c <= 'Z') {
+			buf[out++] = (char)(c + 32);
+			prev = false;
+			continue;
+		}
+
+		if(!prev && 0 < out) {
+			buf[out++] = '_';
+			prev = true;
+		}
+	}
+
+	/* strip trailing '_' */
+	for(; 0 < out && '_' == buf[out - 1]; )
+		out--;
+
+	buf[out] = '\0';
+
+	if(0 == out) {
+		free(buf);
+		return strdup("unnamed");
+	}
+
+	return buf;
+}
+
 /* parse a duration string like "2s", "500ms", "1m", "1h" into milliseconds.
  * returns 0 and logs an error if the format is unrecognised.
  */
@@ -99,6 +165,7 @@ static void option_dalloc(void *data) {
 	free(opt->name);
 	free(opt->command);
 	free(opt->live_cmd);
+	free(opt->signal_name);
 	free(opt->live_output);
 	free(opt);
 }
@@ -166,10 +233,14 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 
 				/* live item fields */
 				opt->live_cmd    = NULL;
+				opt->signal_name = NULL;
 				opt->refresh_ms  = 0;
+				opt->tick_counter = 0;
+				opt->independent = false;
 				opt->live_output = NULL;
 				opt->timer_id    = 0;
 				opt->live_label  = NULL;
+				opt->live_conn   = 0;
 
 				const ucl_object_t *live = ucl_object_lookup(item, "live");
 				if(live) {
@@ -189,6 +260,11 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 
 					const ucl_object_t *ind = ucl_object_lookup(item, "independent");
 					opt->independent = ind && ucl_object_toboolean(ind);
+
+					const ucl_object_t *sn = ucl_object_lookup(item, "signal_name");
+					opt->signal_name = sn
+					                 ? sanitize_signal_name(ucl_object_tostring(sn))
+					                 : sanitize_signal_name(opt->name);
 				}
 
 				const ucl_object_t *ord = ucl_object_lookup(item, "order");
