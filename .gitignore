@@ -2,3 +2,5 @@
 gensystray
 .cache/
 *.dSYM/
+GenSysTray.app
+*.zip

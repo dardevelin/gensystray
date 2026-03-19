@@ -57,6 +57,9 @@
 - `make release` — LTO (`-flto=thin` macOS / `-flto` Linux), `-Os`, dead-strip, strip
 - macOS-specific menu-dismiss code behind `#ifdef __APPLE__`
 - libucl and ss_lib built from submodules, no system install needed
+- `make app` (macOS) — builds `GenSysTray.app` bundle with `LSUIElement` (no dock icon), embeds default icon
+- `make sign SIGN_ID="..."` — codesigns the bundle with a Developer ID
+- `make notarize APPLE_ID=... APPLE_TEAM=... APPLE_PASS=...` — submits to Apple notary, staples ticket
 
 ### Examples
 - `single.cfg` — minimal single-instance config

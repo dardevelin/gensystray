@@ -93,5 +93,59 @@ run: $(TARGET)
 
 clean:
 	rm -f $(TARGET) gensystray_osx_menu.o gensystray_linux_menu.o $(UCL_OBJS) $(SS_OBJ)
+	rm -rf GenSysTray.app
 
+ifeq ($(UNAME_S),Darwin)
+APP_NAME    = GenSysTray
+APP_BUNDLE  = $(APP_NAME).app
+APP_BINARY  = $(APP_BUNDLE)/Contents/MacOS/$(TARGET)
+APP_RES     = $(APP_BUNDLE)/Contents/Resources
+APP_PLIST   = $(APP_BUNDLE)/Contents/Info.plist
+BUNDLE_ID   = org.gensystray.app
+VERSION     = $(shell grep -o 'VERSION=\\"[^"]*\\"' Makefile | head -1 | sed 's/VERSION=\\"//;s/\\"//')
+
+app: release
+	@echo "building $(APP_BUNDLE)..."
+	@mkdir -p $(APP_BUNDLE)/Contents/MacOS $(APP_RES)
+	@cp $(TARGET) $(APP_BINARY)
+	@cp gensystray_default.png $(APP_RES)/
+	@printf '<?xml version="1.0" encoding="UTF-8"?>\n\
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n\
+<plist version="1.0">\n\
+<dict>\n\
+	<key>CFBundleIdentifier</key>      <string>$(BUNDLE_ID)</string>\n\
+	<key>CFBundleName</key>            <string>$(APP_NAME)</string>\n\
+	<key>CFBundleExecutable</key>      <string>$(TARGET)</string>\n\
+	<key>CFBundleVersion</key>         <string>2.2.0</string>\n\
+	<key>CFBundleShortVersionString</key> <string>2.2.0</string>\n\
+	<key>CFBundlePackageType</key>     <string>APPL</string>\n\
+	<key>CFBundleSignature</key>       <string>????</string>\n\
+	<key>LSUIElement</key>             <true/>\n\
+	<key>NSHighResolutionCapable</key> <true/>\n\
+</dict>\n\
+</plist>\n' > $(APP_PLIST)
+	@echo "built $(APP_BUNDLE)"
+
+sign: app
+	@test -n "$(SIGN_ID)" || (echo "error: set SIGN_ID to your Developer ID, e.g. make sign SIGN_ID=\"Developer ID Application: Name (TEAMID)\"" && exit 1)
+	codesign --deep --force --options runtime --sign "$(SIGN_ID)" $(APP_BUNDLE)
+	@echo "signed $(APP_BUNDLE)"
+
+notarize: sign
+	@test -n "$(APPLE_ID)"   || (echo "error: set APPLE_ID"   && exit 1)
+	@test -n "$(APPLE_TEAM)" || (echo "error: set APPLE_TEAM" && exit 1)
+	@test -n "$(APPLE_PASS)" || (echo "error: set APPLE_PASS (app-specific password)" && exit 1)
+	ditto -c -k --keepParent $(APP_BUNDLE) $(APP_NAME).zip
+	xcrun notarytool submit $(APP_NAME).zip \
+		--apple-id "$(APPLE_ID)" \
+		--team-id "$(APPLE_TEAM)" \
+		--password "$(APPLE_PASS)" \
+		--wait
+	xcrun stapler staple $(APP_BUNDLE)
+	rm -f $(APP_NAME).zip
+	@echo "notarized and stapled $(APP_BUNDLE)"
+
+.PHONY: init run clean deps_check release app sign notarize
+else
 .PHONY: init run clean deps_check release
+endif
