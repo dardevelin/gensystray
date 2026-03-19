@@ -382,22 +382,37 @@ static void teardown_config(struct config *config) {
 	free_config_data(config);
 }
 
-/* swap reloadable data fields from src into dst.
- * src's pointers are replaced with dst's old values so freeing src
- * cleans up the old data.
+/* apply updated icon and tooltip from config to an existing GtkStatusIcon.
+ * mirrors the icon selection logic in init_tray without creating a new icon.
  */
-static void swap_config_data(struct config *dst, struct config *src) {
-	GSList *old_sections  = dst->sections;
-	char   *old_icon_path = dst->icon_path;
-	char   *old_tooltip   = dst->tooltip;
+static void apply_tray_update(struct config *config) {
+	GtkStatusIcon *icon = (GtkStatusIcon *)config->tray_icon;
+	if(!icon)
+		return;
 
-	dst->sections  = src->sections;
-	dst->icon_path = src->icon_path;
-	dst->tooltip   = src->tooltip;
+	if(!config->icon_path) {
+		gtk_status_icon_set_from_icon_name(icon, "application-x-executable");
+	} else if('/' == config->icon_path[0] || '.' == config->icon_path[0]
+	          || '~' == config->icon_path[0]) {
+		char *path = config->icon_path;
+		char *expanded = NULL;
+		if('~' == path[0]) {
+			expanded = g_strconcat(g_get_home_dir(), path + 1, NULL);
+			path = expanded;
+		}
+		gint size = gtk_status_icon_get_size(icon);
+		GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_size(path, size, size, NULL);
+		if(pb) {
+			gtk_status_icon_set_from_pixbuf(icon, pb);
+			g_object_unref(pb);
+		}
+		g_free(expanded);
+	} else {
+		gtk_status_icon_set_from_icon_name(icon, config->icon_path);
+	}
 
-	src->sections  = old_sections;
-	src->icon_path = old_icon_path;
-	src->tooltip   = old_tooltip;
+	if(config->tooltip)
+		gtk_status_icon_set_tooltip_text(icon, config->tooltip);
 }
 
 /* config file change callback — reload policy lives here in main.
@@ -446,7 +461,23 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file,
 
 		stop_live_timers(old);
 		old->reload_gen++;
-		swap_config_data(old, matched);
+
+		/* route old data through matched so free_config_data cleans it up,
+		 * and move fresh parsed data into the running config
+		 */
+		char   *new_icon    = matched->icon_path;
+		char   *new_tooltip = matched->tooltip;
+		GSList *new_sections = matched->sections;
+
+		matched->icon_path = old->icon_path;
+		matched->tooltip   = old->tooltip;
+		matched->sections  = old->sections;
+
+		old->icon_path = new_icon;
+		old->tooltip   = new_tooltip;
+		old->sections  = new_sections;
+
+		apply_tray_update(old);
 		start_live_timers(old);
 	}
 
