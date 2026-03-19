@@ -268,8 +268,6 @@ static void on_block_dalloc(void *data) {
 static void live_dalloc(struct live *lv) {
 	if(!lv)
 		return;
-	if(0 != lv->timer_id)
-		g_source_remove(lv->timer_id);
 	g_strfreev(lv->update_label_argv);
 	command_list_free(lv->commands);
 	g_slist_free_full(lv->on_blocks, on_block_dalloc);
