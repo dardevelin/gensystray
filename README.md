@@ -79,7 +79,7 @@ instance "personal" {
 
 ### Commands
 
-Three forms are supported:
+Four forms are supported:
 
 ```hcl
 # string — runs via $SHELL -c, falls back to sh
@@ -90,6 +90,14 @@ item "Date" {
 # array — direct exec, no shell, arguments are safe from splitting
 item "Editor" {
   command = ["nvim", "--listen", "/tmp/nvim.sock"]
+}
+
+# multiple commands — array of arrays, all run on click
+item "Deploy" {
+  command = [
+    ["make", "build"],
+    ["make", "deploy"]
+  ]
 }
 
 # heredoc with shebang — explicit interpreter per item
@@ -177,6 +185,37 @@ item "Sensor" {
 }
 ```
 
+### Reactive on blocks
+
+Inside a `live` block, `on exit` and `on output` react to the
+`update_label` command result. First match wins. Commands inside an `on`
+block fire only on state transition (not every tick).
+
+```hcl
+item "Service" {
+  live {
+    refresh      = "5s"
+    update_label = ["sh", "-c", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/health"]
+
+    on exit 0 {
+      label   = "UP"
+      command = ["notify-send", "Service recovered"]
+    }
+
+    on exit 1 { label = "DOWN" }
+
+    on output "200" { label = "Healthy" }
+    on output "503" { label = "Degraded" }
+  }
+}
+```
+
+- `on exit N` matches the exit code of `update_label`
+- `on output "str"` matches when stdout contains `str` (substring match)
+- `label` overrides the displayed text for that state
+- `command` (optional) runs once when entering that state, supports all
+  command forms including multiple commands
+
 ### Sections
 
 Sections group items into submenus (collapsed) or inline groups (expanded).
@@ -199,8 +238,10 @@ section "Status" {
   show_label = true
 
   item "Clock" {
-    live    = "date '+%H:%M:%S'"
-    refresh = "1s"
+    live {
+      refresh      = "1s"
+      update_label = "date '+%H:%M:%S'"
+    }
   }
 }
 ```

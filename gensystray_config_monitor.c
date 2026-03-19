@@ -27,7 +27,7 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file, GFile *other_file
 
 	GSList *updated_list = load_config(config->config_path);
 	if(!updated_list) {
-		fprintf(stderr, "on_cfg_changed: failed to reload config\n");
+		fprintf(stderr, "gensystray: config reload failed, keeping current config\n");
 		return;
 	}
 	struct config *updated = (struct config *)updated_list->data;

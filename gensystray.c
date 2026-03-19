@@ -117,19 +117,28 @@ static void on_update_label_done(GObject *source, GAsyncResult *result,
 
 	g_subprocess_communicate_finish(proc, result,
 					&stdout_buf, &stderr_buf, &gerr);
-	g_object_unref(proc);
 
 	if(gerr) {
 		g_error_free(gerr);
 		if(stdout_buf) g_bytes_unref(stdout_buf);
 		if(stderr_buf) g_bytes_unref(stderr_buf);
+		g_object_unref(proc);
 		return;
 	}
 
+	int status = g_subprocess_get_if_exited(proc)
+	           ? g_subprocess_get_exit_status(proc)
+	           : -1;
+	g_object_unref(proc);
+
 	gsize        len = 0;
-	const gchar *raw = stdout_buf
-	                 ? (const gchar *)g_bytes_get_data(stdout_buf, &len)
-	                 : "";
+	const gchar *raw = NULL;
+	if(stdout_buf)
+		raw = (const gchar *)g_bytes_get_data(stdout_buf, &len);
+	if(!raw) {
+		raw = "";
+		len = 0;
+	}
 
 	/* copy stdout so we can mutate (trim newline) */
 	char *out = g_strndup(raw, len);
@@ -138,8 +147,6 @@ static void on_update_label_done(GObject *source, GAsyncResult *result,
 		*nl = '\0';
 
 	char *trimmed = out;
-
-	int status = g_subprocess_get_exit_status(proc);
 
 	/* match on blocks — first match wins */
 	struct on_block *matched = NULL;
@@ -151,7 +158,7 @@ static void on_update_label_done(GObject *source, GAsyncResult *result,
 			break;
 		}
 
-		if(ON_OUTPUT == ob->kind && strstr(trimmed, ob->output_match)) {
+		if(ON_OUTPUT == ob->kind && ob->output_match && strstr(trimmed, ob->output_match)) {
 			matched = ob;
 			break;
 		}
@@ -462,7 +469,7 @@ static GSList *filter_instance(GSList *configs, const char *name) {
 	}
 
 	if(!match) {
-		fprintf(stderr, "instance '%s' not found in config\n", name);
+		fprintf(stderr, "gensystray: instance '%s' not found in config\n", name);
 		free_configs(configs);
 		exit(EXIT_FAILURE);
 	}
@@ -512,13 +519,13 @@ int main(int argc, char **argv) {
 
 	char *cfg_path = get_config_path();
 	if(!cfg_path) {
-		fprintf(stderr, "couldn't build cfg path\n");
+		fprintf(stderr, "gensystray: could not determine config file path\n");
 		exit(EXIT_FAILURE);
 	}
 
 	all_configs = load_config(cfg_path);
 	if(!all_configs) {
-		fprintf(stderr, "could not load config file\n");
+		fprintf(stderr, "gensystray: could not load config file\n");
 		free(cfg_path);
 		exit(EXIT_FAILURE);
 	}

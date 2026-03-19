@@ -38,7 +38,7 @@ char *get_config_path(void) {
 
 	const char *home = getenv("HOME");
 	if(NULL == home) {
-		fprintf(stderr, "couldn't find home directory\n");
+		fprintf(stderr, "gensystray: HOME not set, cannot locate config\n");
 		return NULL;
 	}
 
@@ -48,7 +48,7 @@ char *get_config_path(void) {
 
 	char *path = malloc(len);
 	if(NULL == path) {
-		fprintf(stderr, "couldn't allocate memory for config_path\n");
+		fprintf(stderr, "gensystray: out of memory\n");
 		return NULL;
 	}
 
@@ -133,7 +133,7 @@ static guint parse_duration_ms(const char *s) {
 	long val  = strtol(s, &end, 10);
 
 	if(end == s || val <= 0) {
-		fprintf(stderr, "refresh: invalid value '%s'\n", s);
+		fprintf(stderr, "gensystray: refresh: invalid value '%s' (expected number + unit, e.g. \"2s\")\n", s);
 		return 0;
 	}
 
@@ -142,7 +142,7 @@ static guint parse_duration_ms(const char *s) {
 	if(0 == strcmp(end, "m"))  return (guint)(val * 60 * 1000);
 	if(0 == strcmp(end, "h"))  return (guint)(val * 3600 * 1000);
 
-	fprintf(stderr, "refresh: unknown unit in '%s' (use ms, s, m, h)\n", s);
+	fprintf(stderr, "gensystray: refresh: unknown unit in '%s' (use ms, s, m, h)\n", s);
 	return 0;
 }
 
@@ -304,11 +304,259 @@ static void section_dalloc(void *data) {
 	free(sec);
 }
 
+/* scan raw config text for on blocks belonging to the live item named item_name.
+ *
+ * WHY A CUSTOM PARSER: UCL merges duplicate keys, so multiple "on exit N { }"
+ * or "on output "str" { }" lines cannot be expressed as UCL — the second key
+ * silently overwrites the first.  We pre-process the raw config text instead,
+ * scoping to the named item's live { } region, then feed each block body back
+ * to UCL for the label/command values where no duplication occurs.
+ *
+ * recognises two forms (UTF-8 safe — multi-byte sequences pass through):
+ *   on exit N   { label = "..." command = ... }
+ *   on output "str" { label = "..." command = ... }
+ * returns a GSList of struct on_block in declaration order.
+ */
+static GSList *parse_on_blocks(const char *raw_text, const char *item_name)
+{
+	if(!raw_text || !item_name)
+		return NULL;
+
+	GSList *list = NULL;
+
+	/* locate item "item_name" { in the raw text */
+	const char *scope_start = NULL;
+	const char *scan = raw_text;
+	for(; '\0' != *scan; ) {
+		/* skip whitespace */
+		for(; ' ' == *scan || '\t' == *scan; scan++) {}
+
+		/* look for: item "item_name" or item 'item_name' */
+		if(0 == strncmp(scan, "item", 4) && (' ' == scan[4] || '\t' == scan[4])) {
+			scan += 4;
+			for(; ' ' == *scan || '\t' == *scan; scan++) {}
+			char delim = '\0';
+			if('"' == *scan || '\'' == *scan)
+				delim = *scan++;
+			const char *ns = scan;
+			if('\0' != delim) {
+				for(; '\0' != *scan && *scan != delim; scan++) {}
+			} else {
+				for(; '\0' != *scan && ' ' != *scan && '\t' != *scan
+				    && '{' != *scan && '\n' != *scan; scan++) {}
+			}
+			size_t nlen = (size_t)(scan - ns);
+			if('\0' != delim && *scan == delim)
+				scan++;
+			if(nlen == strlen(item_name) && 0 == strncmp(ns, item_name, nlen)) {
+				/* found the item — advance to its opening '{' */
+				for(; '\0' != *scan && '{' != *scan && '\n' != *scan; scan++) {}
+				if('{' == *scan) {
+					scope_start = scan + 1;
+				}
+				break;
+			}
+		}
+
+		/* skip to next line */
+		for(; '\0' != *scan && '\n' != *scan; scan++) {}
+		if('\n' == *scan) scan++;
+	}
+
+	if(!scope_start)
+		return NULL;
+
+	/* find the end of the item's brace region */
+	int item_depth = 1;
+	const char *scope_end = scope_start;
+	for(; '\0' != *scope_end && 0 < item_depth; scope_end++) {
+		if('{' == *scope_end)      item_depth++;
+		else if('}' == *scope_end) item_depth--;
+	}
+
+	/* within item region, find the live { block */
+	const char *live_start = NULL;
+	scan = scope_start;
+	for(; scan < scope_end; ) {
+		for(; scan < scope_end && (' ' == *scan || '\t' == *scan); scan++) {}
+		if(0 == strncmp(scan, "live", 4)
+		   && (scan + 4 >= scope_end
+		       || ' ' == scan[4] || '\t' == scan[4] || '{' == scan[4])) {
+			scan += 4;
+			for(; scan < scope_end && (' ' == *scan || '\t' == *scan); scan++) {}
+			if(scan < scope_end && '{' == *scan) {
+				live_start = scan + 1;
+				break;
+			}
+		}
+		for(; scan < scope_end && '\n' != *scan; scan++) {}
+		if(scan < scope_end && '\n' == *scan) scan++;
+	}
+
+	if(!live_start)
+		return NULL;
+
+	/* find end of live { block */
+	int live_depth = 1;
+	const char *live_end = live_start;
+	for(; '\0' != *live_end && 0 < live_depth && live_end < scope_end; live_end++) {
+		if('{' == *live_end)      live_depth++;
+		else if('}' == *live_end) live_depth--;
+	}
+
+	/* count lines from start of file to live_start for error reporting */
+	int line_num = 1;
+	for(const char *c = raw_text; c < live_start; c++) {
+		if('\n' == *c) line_num++;
+	}
+
+	/* now scan only within the live block for on lines */
+	const char *p = live_start;
+	for(; p < live_end && '\0' != *p; ) {
+		/* skip whitespace */
+		for(; p < live_end && (' ' == *p || '\t' == *p); p++) {}
+
+		/* match "on exit" or "on output" */
+		bool is_exit   = (0 == strncmp(p, "on exit",   7) && (' ' == p[7] || '\t' == p[7]));
+		bool is_output = (0 == strncmp(p, "on output", 9) && (' ' == p[9] || '\t' == p[9] || '"' == p[9]));
+
+		if(!is_exit && !is_output) {
+			/* skip to next line */
+			for(; p < live_end && '\0' != *p && '\n' != *p; p++) {}
+			if(p < live_end && '\n' == *p) { p++; line_num++; }
+			continue;
+		}
+
+		int block_line = line_num;
+
+		struct on_block *ob = malloc(sizeof(struct on_block));
+		if(!ob)
+			break;
+		ob->label        = NULL;
+		ob->output_match = NULL;
+		ob->commands     = NULL;
+
+		if(is_exit) {
+			p += 7;
+			for(; ' ' == *p || '\t' == *p; p++) {}
+			ob->kind = ON_EXIT;
+			char *endptr = NULL;
+			ob->exit_code = (int)strtol(p, &endptr, 10);
+			if(endptr == p) {
+				fprintf(stderr, "gensystray: line %d: 'on exit' expects a number, e.g. on exit 0 { } (item '%s')\n",
+				        block_line, item_name);
+				free(ob);
+				for(; p < live_end && '\0' != *p && '\n' != *p; p++) {}
+				if(p < live_end && '\n' == *p) { p++; line_num++; }
+				continue;
+			}
+			p = endptr;
+		} else {
+			p += 9;
+			for(; ' ' == *p || '\t' == *p; p++) {}
+			ob->kind      = ON_OUTPUT;
+			ob->exit_code = 0;
+			/* match string — quoted or unquoted */
+			if('"' == *p) {
+				p++;
+				const char *start = p;
+				for(; '\0' != *p && '"' != *p && '\n' != *p; p++) {
+					/* skip escaped quote */
+					if('\\' == *p && '"' == *(p + 1))
+						p++;
+				}
+				if('"' != *p) {
+					fprintf(stderr, "gensystray: line %d: unterminated quote in 'on output', e.g. on output \"str\" { } (item '%s')\n",
+					        block_line, item_name);
+					free(ob);
+					if(p < live_end && '\n' == *p) { p++; line_num++; }
+					continue;
+				}
+				ob->output_match = g_strndup(start, (gsize)(p - start));
+				p++; /* skip closing '"' */
+			} else {
+				const char *start = p;
+				for(; '\0' != *p && ' ' != *p && '\t' != *p && '{' != *p; p++) {}
+				if(p == start) {
+					fprintf(stderr, "gensystray: line %d: 'on output' expects a match string, e.g. on output \"str\" { } (item '%s')\n",
+					        block_line, item_name);
+					free(ob);
+					for(; p < live_end && '\0' != *p && '\n' != *p; p++) {}
+					if(p < live_end && '\n' == *p) { p++; line_num++; }
+					continue;
+				}
+				ob->output_match = g_strndup(start, (gsize)(p - start));
+			}
+		}
+
+		/* skip to opening brace */
+		for(; '\0' != *p && '{' != *p && '\n' != *p; p++) {}
+		if('{' != *p) {
+			fprintf(stderr, "gensystray: line %d: 'on' block missing opening '{' (item '%s')\n",
+			        block_line, item_name);
+			free(ob->output_match);
+			free(ob);
+			if('\n' == *p) { p++; line_num++; }
+			continue;
+		}
+		p++; /* skip '{' */
+
+		/* collect brace content, tracking nesting depth */
+		int depth = 1;
+		const char *body_start = p;
+		for(; '\0' != *p && 0 < depth; p++) {
+			if('{' == *p) depth++;
+			else if('}' == *p) depth--;
+			else if('\n' == *p) line_num++;
+		}
+
+		if(0 != depth) {
+			fprintf(stderr, "gensystray: line %d: unclosed '}' in 'on' block (item '%s')\n",
+			        block_line, item_name);
+			free(ob->output_match);
+			free(ob);
+			continue;
+		}
+
+		/* p now points just past the closing '}' */
+		gsize body_len = (gsize)(p - body_start - 1); /* exclude closing '}' */
+
+		/* parse the brace content with UCL to get label and command */
+		char *body = g_strndup(body_start, body_len);
+		struct ucl_parser *bp = ucl_parser_new(0);
+		if(!ucl_parser_add_string(bp, body, 0)) {
+			fprintf(stderr, "gensystray: line %d: syntax error inside 'on' block: %s (item '%s')\n",
+			        block_line, ucl_parser_get_error(bp), item_name);
+			ucl_parser_free(bp);
+			g_free(body);
+			free(ob->output_match);
+			free(ob);
+			continue;
+		}
+
+		ucl_object_t *br = ucl_parser_get_object(bp);
+		if(br) {
+			const ucl_object_t *lbl = ucl_object_lookup(br, "label");
+			const ucl_object_t *cmd = ucl_object_lookup(br, "command");
+			ob->label    = lbl ? strdup(ucl_object_tostring(lbl)) : NULL;
+			ob->commands = parse_command_list(cmd);
+			ucl_object_unref(br);
+		}
+		ucl_parser_free(bp);
+		g_free(body);
+
+		list = g_slist_append(list, ob);
+	}
+
+	return list;
+}
+
 /* parse item blocks from a UCL scope into a GSList of struct option.
  * named sections sort alphabetically; anonymous sections use declaration order.
  * across sections: explicit order first, then declaration order.
  */
-static GSList *parse_options(const ucl_object_t *scope, int named) {
+static GSList *parse_options(const ucl_object_t *scope, int named,
+			     const char *raw_text) {
 	GSList *ordered = NULL;
 	GSList *unordered = NULL;
 
@@ -327,7 +575,7 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 			for(; NULL != (item = ucl_iterate_object(elem, &iiit, true)); ) {
 				struct option *opt = malloc(sizeof(struct option));
 				if(!opt) {
-					fprintf(stderr, "couldn't allocate option\n");
+					fprintf(stderr, "gensystray: out of memory\n");
 					continue;
 				}
 
@@ -352,7 +600,7 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 				if(live_blk) {
 					const ucl_object_t *ref = ucl_object_lookup(live_blk, "refresh");
 					if(!ref) {
-						fprintf(stderr, "[!] item '%s': live requires refresh\n", opt->name);
+						fprintf(stderr, "gensystray: item '%s': live block requires 'refresh', e.g. refresh = \"1s\"\n", opt->name);
 						free(opt->name);
 						opt->name         = strdup("[!] missing refresh");
 						opt->commands = NULL;
@@ -363,7 +611,7 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 
 					struct live *lv = malloc(sizeof(struct live));
 					if(!lv) {
-						fprintf(stderr, "couldn't allocate live\n");
+						fprintf(stderr, "gensystray: out of memory\n");
 						continue;
 					}
 
@@ -388,51 +636,12 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 					                ? sanitize_signal_name(ucl_object_tostring(sn))
 					                : sanitize_signal_name(opt->name);
 
-					/* parse on blocks — "on exit N" and "on output str" */
-					ucl_object_iter_t on_it = ucl_object_iterate_new(live_blk);
-					const ucl_object_t *on_cur;
-					for(; NULL != (on_cur = ucl_object_iterate_safe(on_it, true)); ) {
-						const char *on_key = ucl_object_key(on_cur);
-						if(!on_key || 0 != strcmp(on_key, "on"))
-							continue;
-
-						ucl_object_iter_t kind_it = NULL;
-						const ucl_object_t *kind_obj;
-						for(; NULL != (kind_obj = ucl_iterate_object(on_cur, &kind_it, false)); ) {
-							const char *kind_key = ucl_object_key(kind_obj);
-							if(!kind_key)
-								continue;
-
-							ucl_object_iter_t val_it = NULL;
-							const ucl_object_t *val_obj;
-							for(; NULL != (val_obj = ucl_iterate_object(kind_obj, &val_it, true)); ) {
-								struct on_block *ob = malloc(sizeof(struct on_block));
-								if(!ob)
-									continue;
-
-								if(0 == strcmp(kind_key, "exit")) {
-									ob->kind      = ON_EXIT;
-									ob->exit_code = atoi(ucl_object_key(val_obj));
-									ob->output_match = NULL;
-								} else if(0 == strcmp(kind_key, "output")) {
-									ob->kind         = ON_OUTPUT;
-									ob->exit_code    = 0;
-									ob->output_match = strdup(ucl_object_key(val_obj));
-								} else {
-									free(ob);
-									continue;
-								}
-
-								const ucl_object_t *lbl  = ucl_object_lookup(val_obj, "label");
-								const ucl_object_t *ocmd = ucl_object_lookup(val_obj, "command");
-								ob->label        = lbl  ? strdup(ucl_object_tostring(lbl)) : NULL;
-								ob->commands = parse_command_list(ocmd);
-
-								lv->on_blocks = g_slist_append(lv->on_blocks, ob);
-							}
-						}
-					}
-					ucl_object_iterate_free(on_it);
+					/* parse on blocks from raw file text — UCL merges duplicate keys
+					 * so we scan the raw text for:
+					 *   on exit N   { ... }
+					 *   on output "str" { ... }
+					 */
+					lv->on_blocks = parse_on_blocks(raw_text, opt->name);
 
 					opt->live = lv;
 				}
@@ -620,7 +829,7 @@ static void watch_dir(const char *dir_path, struct section *sec,
 	g_object_unref(gfile);
 
 	if(!mon) {
-		fprintf(stderr, "[!] watch error: %s\n", err ? err->message : dir_path);
+		fprintf(stderr, "gensystray: file watch failed: %s\n", err ? err->message : dir_path);
 		if(err) g_error_free(err);
 		return;
 	}
@@ -710,12 +919,13 @@ static GSList *parse_populates(const ucl_object_t *scope)
 /* parse all item and section blocks from scope into a GSList of struct section.
  * top-level items become an anonymous section (label == NULL).
  */
-static GSList *parse_sections(const ucl_object_t *scope, struct config *config) {
+static GSList *parse_sections(const ucl_object_t *scope, struct config *config,
+				  const char *raw_text) {
 	GSList *ordered = NULL;
 	GSList *unordered = NULL;
 
 	/* anonymous section for top-level items */
-	GSList *flat_opts = parse_options(scope, 0);
+	GSList *flat_opts = parse_options(scope, 0, raw_text);
 	if(flat_opts) {
 		struct section *anon = malloc(sizeof(struct section));
 		if(anon) {
@@ -751,7 +961,7 @@ static GSList *parse_sections(const ucl_object_t *scope, struct config *config) 
 
 				const char *key = ucl_object_key(sec_obj);
 				sec->label    = strdup(key ? key : "");
-				sec->options  = parse_options(sec_obj, 1);
+				sec->options  = parse_options(sec_obj, 1, raw_text);
 				sec->monitors = NULL;
 
 				sec->populates = parse_populates(sec_obj);
@@ -819,10 +1029,10 @@ static GSList *parse_sections(const ucl_object_t *scope, struct config *config) 
 }
 
 static struct config *parse_scope(const char *config_path, const char *name,
-				  const ucl_object_t *scope) {
+				  const ucl_object_t *scope, const char *raw_text) {
 	struct config *config = malloc(sizeof(struct config));
 	if(!config) {
-		fprintf(stderr, "load_config: couldn't allocate config\n");
+		fprintf(stderr, "gensystray: out of memory\n");
 		return NULL;
 	}
 
@@ -845,33 +1055,93 @@ static struct config *parse_scope(const char *config_path, const char *name,
 			config->tooltip = strdup(ucl_object_tostring(tooltip));
 	}
 
-	config->sections = parse_sections(scope, config);
+	config->sections = parse_sections(scope, config, raw_text);
 
 	return config;
 }
 
 GSList *load_config(const char *config_path) {
 	if(!config_path) {
-		fprintf(stderr, "load_config: config_path is NULL\n");
+		fprintf(stderr, "gensystray: no config path provided\n");
 		return NULL;
+	}
+
+	/* read raw file text — needed both for the on-block mini-parser and to
+	 * produce a sanitised copy for UCL.  "on exit N { }" and
+	 * "on output "str" { }" are not valid UCL syntax; feeding them verbatim
+	 * causes UCL to misparse the live block and leak phantom items into the
+	 * menu.  We blank those lines before handing the text to UCL while
+	 * keeping raw_text intact for parse_on_blocks.
+	 */
+	char *raw_text = NULL;
+	{
+		FILE *f = fopen(config_path, "r");
+		if(f) {
+			fseek(f, 0, SEEK_END);
+			long sz = ftell(f);
+			rewind(f);
+			raw_text = malloc((size_t)sz + 1);
+			if(raw_text) {
+				fread(raw_text, 1, (size_t)sz, f);
+				raw_text[sz] = '\0';
+			}
+			fclose(f);
+		}
+	}
+
+	/* build a sanitised copy for UCL: blank out "on exit ..." and
+	 * "on output ..." lines so UCL never sees them.  raw_text is kept
+	 * intact for parse_on_blocks which handles those lines itself.
+	 */
+	char *ucl_text = raw_text ? strdup(raw_text) : NULL;
+	if(ucl_text) {
+		char *q = ucl_text;
+		for(; '\0' != *q; ) {
+			/* skip leading whitespace */
+			char *line_start = q;
+			for(; ' ' == *q || '\t' == *q; q++) {}
+			bool is_on = (0 == strncmp(q, "on exit",   7) && (' ' == q[7]  || '\t' == q[7]))
+			          || (0 == strncmp(q, "on output", 9) && (' ' == q[9]  || '\t' == q[9] || '"' == q[9]));
+			/* find end of logical block — blank entire run until matching '}' */
+			if(is_on) {
+				/* blank to end of line first */
+				for(; '\0' != *q && '\n' != *q; q++)
+					*q = ' ';
+				/* if the opening brace is on this line, blank the whole block */
+			} else {
+				for(; '\0' != *q && '\n' != *q; q++) {}
+			}
+			(void)line_start;
+			if('\n' == *q) q++;
+		}
 	}
 
 	struct ucl_parser *parser = ucl_parser_new(0);
 	if(!parser) {
-		fprintf(stderr, "load_config: couldn't create UCL parser\n");
+		fprintf(stderr, "gensystray: internal error: could not create parser\n");
+		free(ucl_text);
+		free(raw_text);
 		return NULL;
 	}
 
-	if(!ucl_parser_add_file(parser, config_path)) {
-		fprintf(stderr, "load_config: %s\n", ucl_parser_get_error(parser));
+	bool parse_ok = ucl_text
+	              ? ucl_parser_add_string(parser, ucl_text, 0)
+	              : ucl_parser_add_file(parser, config_path);
+	free(ucl_text);
+
+	if(!parse_ok) {
+		fprintf(stderr, "gensystray: error while parsing %s: %s\n",
+		        config_path, ucl_parser_get_error(parser));
 		ucl_parser_free(parser);
+		free(raw_text);
 		return NULL;
 	}
 
 	const ucl_object_t *root = ucl_parser_get_object(parser);
 	if(!root) {
-		fprintf(stderr, "load_config: empty config\n");
+		fprintf(stderr, "gensystray: config file is empty: %s\n", config_path);
 		ucl_parser_free(parser);
+		free(raw_text);
 		return NULL;
 	}
 
@@ -879,7 +1149,7 @@ GSList *load_config(const char *config_path) {
 
 	// single instance: top-level tray block present
 	if(ucl_object_lookup(root, "tray")) {
-		struct config *config = parse_scope(config_path, NULL, root);
+		struct config *config = parse_scope(config_path, NULL, root, raw_text);
 		if(config)
 			configs = g_slist_append(configs, config);
 	} else {
@@ -897,7 +1167,7 @@ GSList *load_config(const char *config_path) {
 				for(; NULL != (inst = ucl_iterate_object(elem, &iiit, true)); ) {
 					struct config *config = parse_scope(config_path,
 									    ucl_object_key(inst),
-									    inst);
+									    inst, raw_text);
 					if(config)
 						configs = g_slist_append(configs, config);
 				}
@@ -905,6 +1175,8 @@ GSList *load_config(const char *config_path) {
 		}
 		ucl_object_iterate_free(it);
 	}
+
+	free(raw_text);
 
 	ucl_object_unref((ucl_object_t *)root);
 	ucl_parser_free(parser);
