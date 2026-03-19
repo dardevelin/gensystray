@@ -1,0 +1,164 @@
+# Suppression rules for Mesa/libgallium and libGLdispatch false positives.
+# These are one-time allocations inside the GPU driver and GL dispatch layer
+# that valgrind cannot track through dlopen/thread-local-storage teardown.
+# None of these call paths touch gensystray code.
+
+{
+   mesa_gallium_init
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:malloc
+   obj:/usr/lib/aarch64-linux-gnu/libgallium*.so
+   ...
+   fun:driCreateNewScreen3
+   ...
+}
+
+{
+   mesa_gallium_dl_init
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:malloc
+   obj:/usr/lib/aarch64-linux-gnu/libgallium*.so
+   ...
+   fun:call_init
+   fun:call_init
+   fun:_dl_init
+   ...
+}
+
+{
+   libGLdispatch_init
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:malloc
+   obj:/usr/lib/aarch64-linux-gnu/libGLdispatch.so*
+   fun:__glDispatchInit
+   ...
+}
+
+{
+   libGLdispatch_stubs
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:malloc
+   obj:/usr/lib/aarch64-linux-gnu/libGLdispatch.so*
+   fun:__glDispatchRegisterStubCallbacks
+   ...
+}
+
+{
+   glib_thread_pool
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:calloc
+   ...
+   fun:pthread_create@@GLIBC_2.34
+   ...
+   fun:g_thread_new
+   ...
+}
+
+{
+   fontconfig_build_fonts
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect,possible
+   ...
+   fun:FcConfigBuildFonts
+   ...
+}
+
+{
+   fontconfig_query
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect,possible
+   ...
+   fun:FcFreeTypeQueryAll
+   ...
+}
+
+{
+   dlopen_driver_init
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect,possible
+   ...
+   fun:dlopen@@GLIBC_2.34
+   ...
+}
+
+{
+   libGLX_mesa_gtk_init
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:malloc
+   obj:/usr/lib/aarch64-linux-gnu/libGLX_mesa.so*
+   ...
+   fun:gtk_init_check
+   ...
+}
+
+{
+   atk_bridge_adaptor_init
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect,possible
+   ...
+   fun:atk_bridge_adaptor_init
+   ...
+}
+
+{
+   dbus_atspi_init
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect,possible
+   ...
+   fun:atspi_get_a11y_bus
+   ...
+}
+
+{
+   gtk_style_context
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:malloc
+   ...
+   fun:gtk_style_new
+   ...
+}
+
+{
+   gtk_style_context_add_class
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:malloc
+   ...
+   fun:gtk_style_context_add_class
+   ...
+}
+
+{
+   pango_context_metrics
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect,possible
+   ...
+   fun:pango_context_get_metrics
+   ...
+}
+
+{
+   fontconfig_expat_parse
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect,possible
+   ...
+   fun:XML_ParseBuffer
+   ...
+}
+
+{
+   pango_language_default
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:calloc
+   ...
+   fun:pango_language_get_default
+   ...
+}
