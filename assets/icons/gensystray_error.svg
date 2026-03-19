@@ -1,0 +1,19 @@
+<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect x="0" y="0" width="120" height="120" rx="26" fill="#0F2027"/>
+
+  <!-- Layered translucent cards (red tint) -->
+  <rect x="22" y="28" width="76" height="14" rx="5" fill="#E05555" opacity="0.45"/>
+  <rect x="22" y="44" width="76" height="14" rx="5" fill="#E05555" opacity="0.25"/>
+  <rect x="22" y="60" width="76" height="14" rx="5" fill="#E05555" opacity="0.15"/>
+
+  <!-- Active item highlight (red) -->
+  <rect x="22" y="70" width="76" height="22" rx="6" fill="#C0392B" opacity="0.9"/>
+  <path d="M34 78 L40 83 L34 88" fill="none" stroke="#FADBD8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="46" y="79" width="24" height="4" rx="2" fill="#FADBD8" opacity="0.7"/>
+
+  <!-- Warning triangle badge (bottom-right) -->
+  <circle cx="96" cy="96" r="18" fill="#0F2027"/>
+  <path d="M96 80 L110 104 L82 104 Z" fill="#E74C3C" stroke="#0F2027" stroke-width="2"/>
+  <text x="96" y="101" text-anchor="middle" font-family="sans-serif" font-weight="bold" font-size="16" fill="#FFFFFF">!</text>
+</svg>

@@ -1131,6 +1131,7 @@ static struct config *parse_scope(const char *config_path, const char *name,
 	config->name        = name ? strdup(name) : NULL;
 	config->icon_path         = NULL;
 	config->icon_path_current = NULL;
+	config->error_icon_path   = NULL;
 	config->tooltip           = NULL;
 	config->sections    = NULL;
 	config->tray_icon       = NULL;
@@ -1143,13 +1144,30 @@ static struct config *parse_scope(const char *config_path, const char *name,
 	if(tray) {
 		const ucl_object_t *icon = ucl_object_lookup(tray, "icon");
 		if(icon) {
-			config->icon_path         = strdup(ucl_object_tostring(icon));
-			config->icon_path_current = strdup(ucl_object_tostring(icon));
+			const char *icon_str = ucl_object_tostring(icon);
+			if(icon_str && '\0' != icon_str[0]) {
+				config->icon_path         = strdup(icon_str);
+				config->icon_path_current = strdup(icon_str);
+			} else {
+				if(name)
+					fprintf(stderr, "gensystray: instance '%s': tray.icon is empty\n", name);
+				else
+					fprintf(stderr, "gensystray: tray.icon is empty\n");
+			}
+		}
+
+		const ucl_object_t *err_icon = ucl_object_lookup(tray, "error_icon");
+		if(err_icon) {
+			const char *s = ucl_object_tostring(err_icon);
+			if(s && '\0' != s[0])
+				config->error_icon_path = strdup(s);
 		}
 
 		const ucl_object_t *tooltip = ucl_object_lookup(tray, "tooltip");
 		if(tooltip)
 			config->tooltip = strdup(ucl_object_tostring(tooltip));
+	} else if(name) {
+		fprintf(stderr, "gensystray: instance '%s': missing 'tray' block\n", name);
 	}
 
 	config->sections = parse_sections(scope, config, raw_text);
@@ -1283,6 +1301,10 @@ GSList *load_config(const char *config_path) {
 
 	free(raw_text);
 
+	if(!configs)
+		fprintf(stderr, "gensystray: %s: no 'tray' block or 'instance' blocks found\n",
+		        config_path);
+
 	ucl_object_unref((ucl_object_t *)root);
 	ucl_parser_free(parser);
 
@@ -1297,6 +1319,7 @@ void free_config_data(struct config *config) {
 	free(config->name);
 	free(config->icon_path);
 	free(config->icon_path_current);
+	free(config->error_icon_path);
 	free(config->tooltip);
 
 	g_slist_free_full(config->sections, section_dalloc);

@@ -44,6 +44,63 @@ static GSList     *all_configs      = NULL;
 static char       *app_cfg_path     = NULL;
 static const char *app_instance     = NULL;
 
+/* show a config error on a running tray icon: swap to the error icon
+ * and set the tooltip to the message.  the next successful reload
+ * will call apply_tray_update which overwrites both, clearing the error.
+ *
+ * icon priority: config error_icon_path → bundled gensystray_error.png
+ * (next to binary) → theme "dialog-error".
+ */
+static void show_tray_error(struct config *config, const char *msg) {
+	GtkStatusIcon *icon = (GtkStatusIcon *)config->tray_icon;
+	if(!icon)
+		return;
+
+	gint size = gtk_status_icon_get_size(icon);
+	bool icon_set = false;
+
+	/* try user-configured error icon */
+	if(config->error_icon_path) {
+		const char *path = config->error_icon_path;
+		char *expanded = NULL;
+		if('~' == path[0]) {
+			expanded = g_strconcat(g_get_home_dir(), path + 1, NULL);
+			path = expanded;
+		}
+		GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_size(path, size, size, NULL);
+		if(pb) {
+			gtk_status_icon_set_from_pixbuf(icon, pb);
+			g_object_unref(pb);
+			icon_set = true;
+		}
+		g_free(expanded);
+	}
+
+	/* try bundled error icon next to the binary */
+	if(!icon_set) {
+		char *self = g_find_program_in_path("gensystray");
+		if(self) {
+			char *dir = g_path_get_dirname(self);
+			char *bundled = g_build_filename(dir, "gensystray_error.png", NULL);
+			GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_size(bundled, size, size, NULL);
+			if(pb) {
+				gtk_status_icon_set_from_pixbuf(icon, pb);
+				g_object_unref(pb);
+				icon_set = true;
+			}
+			g_free(bundled);
+			g_free(dir);
+			g_free(self);
+		}
+	}
+
+	/* last resort: theme icon */
+	if(!icon_set)
+		gtk_status_icon_set_from_icon_name(icon, "dialog-error");
+
+	gtk_status_icon_set_tooltip_text(icon, msg);
+}
+
 /* dismiss every open instance menu. called when any tray icon is clicked
  * or when a click outside all GTK windows is detected by the osx monitor
  */
@@ -119,6 +176,13 @@ static void apply_tray_update(struct config *config) {
 		if(pb) {
 			gtk_status_icon_set_from_pixbuf(icon, pb);
 			g_object_unref(pb);
+		} else {
+			char *msg = g_strdup_printf("config error: tray icon not found: %s", path);
+			fprintf(stderr, "gensystray: tray icon file not found: %s\n", path);
+			g_free(expanded);
+			show_tray_error(config, msg);
+			g_free(msg);
+			return;
 		}
 		g_free(expanded);
 	} else {
@@ -509,6 +573,9 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file,
 	GSList *new_list = load_config(app_cfg_path);
 	if(!new_list) {
 		fprintf(stderr, "gensystray: config reload failed, keeping current config\n");
+		for(GSList *l = all_configs; l; l = l->next)
+			show_tray_error((struct config *)l->data,
+					"config error: reload failed (check stderr)");
 		return;
 	}
 
@@ -538,17 +605,20 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file,
 		/* route old data through matched so free_config_data cleans it up,
 		 * and move fresh parsed data into the running config
 		 */
-		char   *new_icon     = matched->icon_path;
-		char   *new_tooltip  = matched->tooltip;
-		GSList *new_sections = matched->sections;
+		char   *new_icon       = matched->icon_path;
+		char   *new_error_icon = matched->error_icon_path;
+		char   *new_tooltip    = matched->tooltip;
+		GSList *new_sections   = matched->sections;
 
-		matched->icon_path = old->icon_path;
-		matched->tooltip   = old->tooltip;
-		matched->sections  = old->sections;
+		matched->icon_path       = old->icon_path;
+		matched->error_icon_path = old->error_icon_path;
+		matched->tooltip         = old->tooltip;
+		matched->sections        = old->sections;
 
-		old->icon_path = new_icon;
-		old->tooltip   = new_tooltip;
-		old->sections  = new_sections;
+		old->icon_path       = new_icon;
+		old->error_icon_path = new_error_icon;
+		old->tooltip         = new_tooltip;
+		old->sections        = new_sections;
 
 		/* reset runtime icon to the new parsed default */
 		free(old->icon_path_current);
@@ -794,8 +864,20 @@ static GtkStatusIcon *init_tray(struct config *config) {
 			expanded = g_strconcat(g_get_home_dir(), path + 1, NULL);
 			path = expanded;
 		}
-		icon = gtk_status_icon_new_from_file(path);
-		g_free(expanded);
+		if(!g_file_test(path, G_FILE_TEST_EXISTS)) {
+			fprintf(stderr, "gensystray: tray icon file not found: %s\n", path);
+			char *msg = g_strdup_printf("config error: tray icon not found: %s", path);
+			g_free(expanded);
+			/* create a temporary icon, wire up tray_icon so
+			 * show_tray_error can operate, then apply the error */
+			icon = gtk_status_icon_new_from_icon_name("image-missing");
+			config->tray_icon = icon;
+			show_tray_error(config, msg);
+			g_free(msg);
+		} else {
+			icon = gtk_status_icon_new_from_file(path);
+			g_free(expanded);
+		}
 	} else {
 		/* no path separator → treat as XDG theme icon name */
 		icon = gtk_status_icon_new_from_icon_name(path);

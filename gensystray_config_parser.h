@@ -146,6 +146,7 @@ struct config {
 	char *name;                 /* instance name, NULL in single-instance mode */
 	char *icon_path;            /* parsed default from config file */
 	char *icon_path_current;    /* runtime value, initialized from icon_path, overridable */
+	char *error_icon_path;      /* user override for error icon, NULL = use built-in */
 	char *tooltip;
 	GSList *sections; /* ordered list of struct section */
 	void *tray_icon;  /* GtkStatusIcon *, kept alive here */
