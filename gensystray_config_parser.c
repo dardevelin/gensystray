@@ -1277,11 +1277,7 @@ GSList *load_config(const char *config_path) {
 	return configs;
 }
 
-void free_configs(GSList *configs) {
-	g_slist_free_full(configs, (GDestroyNotify)free_config);
-}
-
-void free_config(struct config *config) {
+void free_config_data(struct config *config) {
 	if(!config)
 		return;
 
@@ -1293,4 +1289,8 @@ void free_config(struct config *config) {
 	g_slist_free_full(config->sections, section_dalloc);
 
 	free(config);
+}
+
+void free_configs(GSList *configs) {
+	g_slist_free_full(configs, (GDestroyNotify)free_config_data);
 }

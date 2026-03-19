@@ -157,10 +157,16 @@ struct config {
  */
 GSList *load_config(const char *config_path);
 
-/* frees all memory owned by a single config, including the struct itself */
-void free_config(struct config *config);
+/* frees parsed fields owned by the config struct (name, icon_path, tooltip,
+ * sections, config_path) and the struct itself.
+ * does NOT touch runtime state: tray_icon, main_tick_ctx, main_timer_id.
+ * call teardown_config (in main) for configs that have been fully initialised.
+ */
+void free_config_data(struct config *config);
 
-/* frees the full list returned by load_config */
+/* frees the full list returned by load_config — safe for freshly parsed
+ * configs that have never had runtime state attached.
+ */
 void free_configs(GSList *configs);
 
 #endif

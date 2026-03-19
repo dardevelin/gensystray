@@ -355,6 +355,19 @@ static void disconnect_live_slots(struct config *config) {
 	}
 }
 
+/* full teardown for a live config instance: stops timers, releases the tray
+ * icon GObject, then frees all parsed data. safe to call on any initialised
+ * config; free_config_data covers configs that never had runtime state.
+ */
+static void teardown_config(struct config *config) {
+	stop_live_timers(config);
+	if(config->tray_icon) {
+		g_object_unref(config->tray_icon);
+		config->tray_icon = NULL;
+	}
+	free_config_data(config);
+}
+
 /* swap reloadable data fields from src into dst.
  * src's pointers are replaced with dst's old values so freeing src
  * cleans up the old data.
@@ -702,13 +715,8 @@ int main(int argc, char **argv) {
 
 	gtk_main();
 
-	for(GSList *l = all_configs; l; l = l->next) {
-		struct config *c = (struct config *)l->data;
-		stop_live_timers(c);
-		if(c->tray_icon)
-			g_object_unref(c->tray_icon);
-	}
-	free_configs(all_configs);
+	g_slist_foreach(all_configs, (GFunc)teardown_config, NULL);
+	g_slist_free(all_configs);
 	free(app_cfg_path);
 	g_object_unref(cfg_monitor);
 	ss_cleanup();
