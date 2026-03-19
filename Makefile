@@ -109,6 +109,7 @@ app: release
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS $(APP_RES)
 	@cp $(TARGET) $(APP_BINARY)
 	@cp gensystray_default.png $(APP_RES)/
+	@cp assets/icons/gensystray.icns $(APP_RES)/
 	@printf '<?xml version="1.0" encoding="UTF-8"?>\n\
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n\
 <plist version="1.0">\n\
@@ -116,6 +117,7 @@ app: release
 	<key>CFBundleIdentifier</key>      <string>$(BUNDLE_ID)</string>\n\
 	<key>CFBundleName</key>            <string>$(APP_NAME)</string>\n\
 	<key>CFBundleExecutable</key>      <string>$(TARGET)</string>\n\
+	<key>CFBundleIconFile</key>        <string>gensystray</string>\n\
 	<key>CFBundleVersion</key>         <string>2.2.0</string>\n\
 	<key>CFBundleShortVersionString</key> <string>2.2.0</string>\n\
 	<key>CFBundlePackageType</key>     <string>APPL</string>\n\
