@@ -161,7 +161,7 @@ static char **parse_argv(const ucl_object_t *obj)
 		ucl_object_iter_t it = NULL;
 		const ucl_object_t *elem;
 		GPtrArray *arr = g_ptr_array_new();
-		for(; NULL != (elem = ucl_iterate_object(obj, &it, false)); )
+		for(; NULL != (elem = ucl_iterate_object(obj, &it, true)); )
 			g_ptr_array_add(arr, g_strdup(ucl_object_tostring(elem)));
 		g_ptr_array_add(arr, NULL);
 		return (char **)g_ptr_array_free(arr, false);
@@ -220,14 +220,14 @@ static GSList *parse_command_list(const ucl_object_t *obj)
 	if(UCL_ARRAY == ucl_object_type(obj)) {
 		/* peek at first element to detect array-of-arrays */
 		ucl_object_iter_t peek = NULL;
-		const ucl_object_t *first = ucl_iterate_object(obj, &peek, false);
+		const ucl_object_t *first = ucl_iterate_object(obj, &peek, true);
 
 		if(first && UCL_ARRAY == ucl_object_type(first)) {
 			/* array of arrays — each sub-array is one argv */
 			GSList *list = NULL;
 			ucl_object_iter_t it = NULL;
 			const ucl_object_t *sub;
-			for(; NULL != (sub = ucl_iterate_object(obj, &it, false)); ) {
+			for(; NULL != (sub = ucl_iterate_object(obj, &it, true)); ) {
 				char **argv = parse_argv(sub);
 				if(argv)
 					list = g_slist_append(list, argv);
