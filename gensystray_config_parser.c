@@ -585,9 +585,10 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 				const ucl_object_t *sep = ucl_object_lookup(item, "separator");
 				if(sep && ucl_object_toboolean(sep)) {
 					free(opt->name);
-					opt->name         = strdup("--");
+					opt->name     = strdup("--");
 					opt->commands = NULL;
-					opt->order        = -1;
+					opt->live     = NULL;
+					opt->order    = -1;
 					unordered = g_slist_prepend(unordered, opt);
 					continue;
 				}
