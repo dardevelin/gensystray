@@ -1,3 +1,6 @@
 [submodule "deps/libucl"]
 	path = deps/libucl
 	url = https://github.com/dardevelin/libucl.git
+[submodule "deps/ss_lib"]
+	path = deps/ss_lib
+	url = https://github.com/dardevelin/ss_lib
