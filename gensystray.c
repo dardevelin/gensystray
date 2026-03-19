@@ -358,6 +358,8 @@ static void swap_config_data(struct config *dst, struct config *src) {
 	src->tooltip   = old_tooltip;
 }
 
+static void disconnect_live_slots(struct config *config);
+
 /* config file change callback — reload policy lives here in main.
  * re-parses the config, filters to the active instance, stops timers,
  * swaps data, and restarts timers for each running instance.
@@ -368,6 +370,13 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file,
 {
 	(void)monitor; (void)file; (void)other_file;
 	(void)event_type; (void)user_data;
+
+	/* close any open menu before swapping data — menu widgets
+	 * reference section/option pointers that are about to be freed
+	 */
+	popdown_all_menus();
+	for(GSList *l = all_configs; l; l = l->next)
+		disconnect_live_slots((struct config *)l->data);
 
 	GSList *new_list = load_config(app_cfg_path);
 	if(!new_list) {
