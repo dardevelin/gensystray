@@ -98,8 +98,10 @@ static void on_live_signal(const ss_data_t *data, void *user_data) {
 
 /* context passed to the async update_label callback */
 struct live_cb_ctx {
-	struct option *opt;
-	GSubprocess   *proc;
+	struct option  *opt;
+	GSubprocess    *proc;
+	struct config  *config;
+	guint           gen;    /* reload_gen at dispatch time */
 };
 
 /* async callback — runs on the GTK main loop after update_label_argv exits.
@@ -111,7 +113,16 @@ static void on_update_label_done(GObject *source, GAsyncResult *result,
 	struct live_cb_ctx *ctx  = (struct live_cb_ctx *)user_data;
 	struct option      *opt  = ctx->opt;
 	GSubprocess        *proc = ctx->proc;
+	bool stale = ctx->config->reload_gen != ctx->gen;
 	g_free(ctx);
+
+	if(stale) {
+		GError *gerr = NULL;
+		g_subprocess_communicate_finish(proc, result, NULL, NULL, &gerr);
+		if(gerr) g_error_free(gerr);
+		g_object_unref(proc);
+		return;
+	}
 
 	GBytes *stdout_buf = NULL;
 	GBytes *stderr_buf = NULL;
@@ -215,8 +226,10 @@ static gboolean live_tick(gpointer user_data) {
 	}
 
 	struct live_cb_ctx *ctx = g_new(struct live_cb_ctx, 1);
-	ctx->opt  = opt;
-	ctx->proc = proc;
+	ctx->opt    = opt;
+	ctx->proc   = proc;
+	ctx->config = (struct config *)opt->live->owner;
+	ctx->gen    = ctx->config ? ctx->config->reload_gen : 0;
 
 	g_subprocess_communicate_async(proc, NULL, NULL,
 				       on_update_label_done, ctx);
@@ -278,6 +291,7 @@ static void start_live_timers(struct config *config) {
 				continue;
 
 			ss_signal_register(opt->live->signal_name);
+			opt->live->owner = config;
 
 			live_tick(opt);   /* initial value before first interval */
 
@@ -431,6 +445,7 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file,
 			continue;
 
 		stop_live_timers(old);
+		old->reload_gen++;
 		swap_config_data(old, matched);
 		start_live_timers(old);
 	}

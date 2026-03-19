@@ -73,6 +73,7 @@ struct live {
 	guint    timer_id;             /* GLib timer source ID, 0 = not running */
 	void            *live_label;   /* GtkWidget *, set while menu is open */
 	ss_connection_t  live_conn;    /* ss_lib connection handle, 0 = not connected */
+	void            *owner;        /* struct config * that owns this live item */
 };
 
 struct option {
@@ -148,6 +149,7 @@ struct config {
 	void *menu;       /* GtkMenu *, currently open menu or NULL */
 	guint  main_timer_id; /* GLib source ID for master tick, 0 = none */
 	void  *main_tick_ctx;      /* struct main_tick_ctx *, owned by live engine */
+	guint  reload_gen;         /* incremented on every reload; in-flight callbacks check this */
 };
 
 /* allocates, populates and returns a GSList of struct config from config_path.

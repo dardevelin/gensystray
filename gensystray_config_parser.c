@@ -631,6 +631,7 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 					lv->live_conn         = 0;
 					lv->last_matched      = NULL;
 					lv->on_blocks         = NULL;
+					lv->owner             = NULL;
 
 					const ucl_object_t *ind = ucl_object_lookup(live_blk, "independent");
 					lv->independent = ind && ucl_object_toboolean(ind);
@@ -1127,7 +1128,8 @@ static struct config *parse_scope(const char *config_path, const char *name,
 	config->tray_icon       = NULL;
 	config->menu            = NULL;
 	config->main_timer_id = 0;
-	config->main_tick_ctx      = NULL;
+	config->main_tick_ctx = NULL;
+	config->reload_gen    = 0;
 
 	const ucl_object_t *tray = ucl_object_lookup(scope, "tray");
 	if(tray) {
