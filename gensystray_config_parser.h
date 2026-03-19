@@ -228,4 +228,9 @@ void free_configs(GSList *configs);
 char *apply_tpl(const char *tpl, const char *filename,
 		const char *filepath, bool for_shell);
 
+/* shell-escape a string with single quotes for safe use in sh -c.
+ * embedded single quotes are replaced with '\''. caller must g_free.
+ */
+char *shell_quote(const char *s);
+
 #endif

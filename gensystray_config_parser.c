@@ -56,6 +56,17 @@ char *get_config_path(void) {
 	return path;
 }
 
+/* safe wrapper for ucl_object_tostring — returns fallback instead of
+ * NULL when the object is not a string type (boolean, integer, etc.).
+ * prevents strdup(NULL) crashes throughout the parser.
+ */
+static const char *ucl_tostring_safe(const ucl_object_t *obj,
+				     const char *fallback)
+{
+	const char *s = ucl_object_tostring(obj);
+	return s ? s : fallback;
+}
+
 /* warn about unrecognized keys in a UCL object scope.
  * known is a NULL-terminated array of accepted key names.
  * scope_desc is used in the warning message, e.g. "tray", "section 'Notes'".
@@ -170,13 +181,27 @@ static guint parse_duration_ms(const char *s) {
 		return 0;
 	}
 
-	if(0 == strcmp(end, "ms")) return (guint)val;
-	if(0 == strcmp(end, "s"))  return (guint)(val * 1000);
-	if(0 == strcmp(end, "m"))  return (guint)(val * 60 * 1000);
-	if(0 == strcmp(end, "h"))  return (guint)(val * 3600 * 1000);
+	long ms = 0;
+	if(0 == strcmp(end, "ms"))      ms = val;
+	else if(0 == strcmp(end, "s"))  ms = val * 1000;
+	else if(0 == strcmp(end, "m"))  ms = val * 60 * 1000;
+	else if(0 == strcmp(end, "h"))  ms = val * 3600 * 1000;
+	else {
+		fprintf(stderr, "gensystray: refresh: unknown unit in '%s' (use ms, s, m, h)\n", s);
+		return 0;
+	}
 
-	fprintf(stderr, "gensystray: refresh: unknown unit in '%s' (use ms, s, m, h)\n", s);
-	return 0;
+	/* guard against overflow and enforce minimum 100ms */
+	if(ms > (long)G_MAXUINT || ms < 0) {
+		fprintf(stderr, "gensystray: refresh: value '%s' overflows, clamped to 24h\n", s);
+		ms = 24L * 3600 * 1000;
+	}
+	if(ms < 100) {
+		fprintf(stderr, "gensystray: refresh: value '%s' below minimum, clamped to 100ms\n", s);
+		ms = 100;
+	}
+
+	return (guint)ms;
 }
 
 /* normalize a UCL command value into a heap-allocated argv array.
@@ -195,7 +220,7 @@ static char **parse_argv(const ucl_object_t *obj)
 		const ucl_object_t *elem;
 		GPtrArray *arr = g_ptr_array_new();
 		for(; NULL != (elem = ucl_iterate_object(obj, &it, true)); )
-			g_ptr_array_add(arr, g_strdup(ucl_object_tostring(elem)));
+			g_ptr_array_add(arr, g_strdup(ucl_tostring_safe(elem, "")));
 		g_ptr_array_add(arr, NULL);
 		return (char **)g_ptr_array_free(arr, false);
 	}
@@ -318,7 +343,7 @@ static struct emit *parse_emit(const ucl_object_t *scope,
 
 	em->signal = strdup(sig_str);
 	const ucl_object_t *val = ucl_object_lookup(emit_obj, "value");
-	em->value = val ? strdup(ucl_object_tostring(val)) : NULL;
+	em->value = val ? strdup(ucl_tostring_safe(val, "")) : NULL;
 
 	return em;
 }
@@ -646,7 +671,7 @@ static GSList *parse_on_blocks(const char *raw_text, const char *item_name)
 		if(br) {
 			const ucl_object_t *lbl = ucl_object_lookup(br, "label");
 			const ucl_object_t *cmd = ucl_object_lookup(br, "command");
-			ob->label    = lbl ? strdup(ucl_object_tostring(lbl)) : NULL;
+			ob->label    = lbl ? strdup(ucl_tostring_safe(lbl, "")) : NULL;
 			ob->commands = parse_command_list(cmd);
 
 			char emit_ctx[128];
@@ -1278,7 +1303,7 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
  * embedded single quotes are replaced with '\'' (end quote, escaped
  * literal quote, reopen quote).  caller must g_free the result.
  */
-static char *shell_quote(const char *s)
+char *shell_quote(const char *s)
 {
 	GString *out = g_string_new("'");
 	for(; '\0' != *s; s++) {
@@ -1321,14 +1346,23 @@ char *apply_tpl(const char *tpl, const char *filename,
 	return result;
 }
 
+/* hard cap for recursive directory traversal — prevents stack overflow
+ * from depth = -1 on deep or cyclic directory trees.
+ */
+#define MAX_GLOB_DEPTH 64
+
 /* recursively expand dir_path, matching filenames against pat, up to max_depth.
- * depth_left == -1 means unlimited. appends matched options to *opts.
+ * depth_left == -1 means unlimited (capped internally to MAX_GLOB_DEPTH).
+ * appends matched options to *opts.
  * if hierarchy is true, subdirectory entries are skipped (caller handles them).
  */
 static void expand_dir(const char *dir_path, const char *pat,
 		       const struct populate *pop, int depth_left,
 		       GSList **opts)
 {
+	/* cap unlimited depth to MAX_GLOB_DEPTH */
+	if(-1 == depth_left)
+		depth_left = MAX_GLOB_DEPTH;
 	GError *err = NULL;
 	GDir   *dir = g_dir_open(dir_path, 0, &err);
 
@@ -1354,6 +1388,12 @@ static void expand_dir(const char *dir_path, const char *pat,
 	for(; NULL != (fname = g_dir_read_name(dir)); ) {
 		char *filepath = g_strconcat(dir_path, G_DIR_SEPARATOR_S, fname, NULL);
 		bool  is_dir   = g_file_test(filepath, G_FILE_TEST_IS_DIR);
+
+		/* skip symlinked directories to prevent infinite cycles */
+		if(is_dir && g_file_test(filepath, G_FILE_TEST_IS_SYMLINK)) {
+			g_free(filepath);
+			continue;
+		}
 
 		if(is_dir) {
 			bool can_recurse = 0 != depth_left;
@@ -1511,6 +1551,10 @@ static void watch_dir(const char *dir_path, struct section *sec,
 		      struct config *config, struct populate *pop,
 		      int depth_left)
 {
+	/* cap unlimited depth */
+	if(-1 == depth_left)
+		depth_left = MAX_GLOB_DEPTH;
+
 	GFile  *gfile = g_file_new_for_path(dir_path);
 	GError *err   = NULL;
 
@@ -1548,7 +1592,8 @@ static void watch_dir(const char *dir_path, struct section *sec,
 	const char *fname;
 	for(; NULL != (fname = g_dir_read_name(dir)); ) {
 		char *subpath = g_strconcat(dir_path, G_DIR_SEPARATOR_S, fname, NULL);
-		if(g_file_test(subpath, G_FILE_TEST_IS_DIR))
+		if(g_file_test(subpath, G_FILE_TEST_IS_DIR)
+		   && !g_file_test(subpath, G_FILE_TEST_IS_SYMLINK))
 			watch_dir(subpath, sec, config, pop,
 				  0 < depth_left ? depth_left - 1 : -1);
 		g_free(subpath);
@@ -1581,10 +1626,10 @@ static GSList *parse_populates(const ucl_object_t *scope)
 		if(!pop)
 			continue;
 
-		pop->from = strdup(ucl_object_tostring(from_obj));
+		pop->from = strdup(ucl_tostring_safe(from_obj, ""));
 
 		const ucl_object_t *pat = ucl_object_lookup(cur, "pattern");
-		pop->pattern = strdup(pat ? ucl_object_tostring(pat) : "");
+		pop->pattern = strdup(pat ? ucl_tostring_safe(pat, "") : "");
 
 		const ucl_object_t *w = ucl_object_lookup(cur, "watch");
 		pop->watch = w && ucl_object_toboolean(w);
@@ -1850,7 +1895,7 @@ static struct config *parse_scope(const char *config_path, const char *name,
 
 		const ucl_object_t *tooltip = ucl_object_lookup(tray, "tooltip");
 		if(tooltip)
-			config->tooltip = strdup(ucl_object_tostring(tooltip));
+			config->tooltip = strdup(ucl_tostring_safe(tooltip, "GenSysTray"));
 
 		const ucl_object_t *med = ucl_object_lookup(tray, "max_emit_depth");
 		if(med) {

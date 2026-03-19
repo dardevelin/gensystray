@@ -544,14 +544,18 @@ static void on_emit_signal(const ss_data_t *data, void *user_data) {
 	if(!value) value = "";
 
 	if(eb->command_tpl) {
-		/* substitute {value} in command template */
+		/* substitute {value} in command template — shell-quote to
+		 * prevent injection via crafted signal payloads or filenames
+		 */
+		char *quoted = shell_quote(value);
 		char *cmd = g_strdup(eb->command_tpl);
 		if(strstr(cmd, "{value}")) {
 			char **parts = g_strsplit(cmd, "{value}", -1);
 			g_free(cmd);
-			cmd = g_strjoinv(value, parts);
+			cmd = g_strjoinv(quoted, parts);
 			g_strfreev(parts);
 		}
+		g_free(quoted);
 		spawn_tpl_command(cmd);
 		g_free(cmd);
 	}
@@ -582,9 +586,17 @@ static void start_live_timers(struct config *config) {
 	GSList *shared_opts = NULL;
 	guint   shared_ms   = 0;
 
-	/* apply config-level max_emit_depth override */
-	if(0 < config->max_emit_depth)
+	/* apply config-level max_emit_depth override, clamped to 256
+	 * to prevent stack overflow from deep recursive emit chains
+	 */
+	if(0 < config->max_emit_depth) {
 		max_emit_depth = config->max_emit_depth;
+		if(max_emit_depth > 256) {
+			fprintf(stderr, "gensystray: max_emit_depth %d clamped to 256\n",
+			        max_emit_depth);
+			max_emit_depth = 256;
+		}
+	}
 
 	/* set ss_lib namespace to instance name for signal scoping */
 	ss_set_namespace(config->name ? config->name : "default");
