@@ -1,124 +1,90 @@
-# gensystray 2.0 TODO
-
-## Config format (locked)
-
-The 2.0 config format is UCL (superset of HCL). Parsed with libucl.
-
-### Instance mode (locked)
-
-Two modes, mutually exclusive. Mixing is a parse error.
-
-**Single instance** — no `instance` blocks, everything at top level:
-```hcl
-tray { icon = "/path/icon.png" }
-item "Terminal" { command = ["xterm"] }
-```
-
-**Multi instance** — all config inside named `instance` blocks, nothing outside:
-```hcl
-instance "work" {
-  tray { icon = "/path/work.png" }
-  item "Terminal" { command = ["xterm"] }
-  ipc { socket = "/run/user/1000/gensystray-work.sock" }
-}
-
-instance "personal" {
-  tray { icon = "/path/personal.png" }
-  item "Music" { command = ["spotify"] }
-  ipc { socket = "/run/user/1000/gensystray-personal.sock" }
-}
-```
-
-- `gensystray` starts all instances
-- `gensystray --instance work` starts only that instance
-- file monitor reloads all instances on change
-
-### Item ordering (locked)
-
-1. Items with `order` come first, sorted by `order` value (ascending)
-2. Items without `order` follow in declaration order
-3. Separators are items and follow the same ordering rules
-
-```hcl
-tray {
-  icon    = "/path/to/icon.png"
-  tooltip = "My Tray"
-}
-
-item "Terminal" {
-  command = ["xterm"]
-}
-
-item "separator" {
-  separator = true
-  order     = 2
-}
-
-item "Browser" {
-  command = ["firefox"]
-  order   = 1
-}
-
-item "Editor" {
-  command = ["nvim"]
-  order   = 3
-}
-
-item "CPU" {
-  live    = "..."
-  refresh = "2s"
-}
-
-section "Notes" {
-  populate {
-    from    = "glob"
-    pattern = "~/notes/*.md"
-    watch   = true
-    item {
-      label   = "{filename}"
-      command = ["nvim", "{filepath}"]
-    }
-  }
-
-  populate {
-    from    = "glob"
-    pattern = "~/notes/*.pdf"
-    watch   = true
-    item {
-      label   = "{filename}"
-      command = ["zathura", "{filepath}"]
-    }
-  }
-}
-
-ipc {
-  socket = "/run/user/1000/gensystray.sock"
-}
-```
-
-## Needs design
-
-- live items: define what `live` accepts — single command string, array, or
-  heredoc. Define how stdout is consumed (full output as label, last line,
-  trimmed). Define error behavior when the command fails or returns empty.
-
-- populate sources: `glob` is locked. Design `live` (stdout lines as entries)
-  and `ipc` (external process pushes entries over socket) sources.
-
-- ipc protocol: define the message format over the unix socket. Operations
-  needed: reload config, push items to a section, remove items from a section,
-  query current state.
-
-## Pending C cleanup
-
-- UTF-8 audit: fstrchr and fextract are byte-level and safe for ASCII
-  delimiters but this assumption is undocumented.
+# gensystray TODO
 
 ## Done
 
+### Core
 - Replace build scripts with Makefile using pkg-config
 - Replace SDL2 thread spawner with g_spawn_async
 - Replace dlist with GSList
 - Isolate config parser (static internals, public load_config/free_config)
 - Add config file monitor (GFileMonitor, live reload)
 - Unify error codes, drop gensystray_errors.h
+- Single-instance and multi-instance (`instance "name" {}`) config modes
+- Item ordering: explicit `order` field, then declaration order
+- Separators as items with `separator = true`
+
+### Config format
+- UCL-based config (superset of HCL) via libucl
+- `tray { icon = ... tooltip = ... }` block
+- `item "Name" { command = ... }` — string, array, or array-of-arrays
+- `section "Name" { expanded = ... }` with `show_label`, `separators`, `order`
+- Shell detection: string commands use `$SHELL`, shebang (`#!`) overrides per item
+- Proper error messages for malformed config (no crashes on bad syntax)
+- UTF-8 safe custom parser (byte-level ASCII scanning, match strings as raw bytes)
+
+### Live items
+- `live { refresh = "1s" update_label = ... }` block
+- Async `update_label` via GSubprocess (non-blocking, no GTK stall)
+- `independent = true` — per-item timer instead of shared master tick
+- Master tick at GCD of all non-independent refresh intervals
+- `on exit N { label = ... command = ... }` blocks
+- `on output "str" { label = ... command = ... }` blocks
+- State transition — on-block commands fire only when state changes
+- Custom mini-parser for `on` blocks (UCL merges duplicate keys, can't handle these natively)
+- UCL sanitisation: `on exit`/`on output` lines blanked before UCL sees them
+
+### Glob populate
+- `populate { from = "glob" pattern = "~/..." watch = true }` sections
+- `{filename}` and `{filepath}` template substitution in label and command
+- Shell-safe single-quoting for `{filepath}` in sh -c commands (spaces in filenames)
+- `depth = N` — recursion depth (0 = base dir only, N = N levels, -1 = unlimited)
+- `hierarchy = true` — subdirectories become nested submenu items
+- `hierarchy_expanded = true` on section — subdir contents render flat with dim header
+- `watch = true` — GFileMonitor re-expands on filesystem change
+
+### Icons
+- File path icons (`/abs/path`, `~/path`, `./rel`) loaded via GdkPixbuf
+- `size-changed` signal reloads pixbuf at exact tray-requested size (22, 24, 32px)
+- XDG theme icon names (`"battery"`, `"network-wireless"`) via gtk_status_icon_new_from_icon_name
+- Fallback to `application-x-executable` theme icon when no icon specified
+
+### Build
+- Cross-platform: macOS (Clang + ObjC NSEvent monitor) and Linux (GCC + GTK stub)
+- `make` auto-runs `make init` if submodules not initialised
+- `make release` — LTO (`-flto=thin` macOS / `-flto` Linux), `-Os`, dead-strip, strip
+- macOS-specific menu-dismiss code behind `#ifdef __APPLE__`
+- libucl and ss_lib built from submodules, no system install needed
+
+### Examples
+- `single.cfg` — minimal single-instance config
+- `multi.cfg` — multiple instances
+- `sections.cfg` — named sections, separators, ordering
+- `commands.cfg` — string, array, and multi-command items
+- `glob_populate.cfg` — populate from filesystem glob
+- `live_on_blocks.cfg` — clock variants, independent timer, on exit/output blocks
+
+---
+
+## Deferred
+
+### IPC
+- Unix socket protocol (`ipc { socket = "..." }` block)
+- `gensystray-msg` CLI tool to send commands to a running instance
+- Operations: reload config, push/remove items in a section, query state
+- Multi-instance socket naming
+
+### Process lifetime
+- Process stays alive when all instances are closed (for file monitor resurrection)
+- Currently exits when last instance menu is dismissed
+
+### Live items (future)
+- `populate { from = "live" }` — stdout lines as dynamic section entries
+- `populate { from = "ipc" }` — external process pushes entries over socket
+
+### Memory
+- Arena allocator for config structs (reduce malloc fragmentation on reload)
+- Currently uses malloc/free per struct on every config reload
+
+### Live items in hierarchy submenus
+- `start_live_timers` does not recurse into `opt->subopts`
+- Live items nested inside hierarchy submenus never get timers started
