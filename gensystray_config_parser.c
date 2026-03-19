@@ -1374,6 +1374,7 @@ static void expand_dir(const char *dir_path, const char *pat,
 				 err ? err->message : dir_path);
 			e->name         = strdup(buf);
 			e->commands = NULL;
+			e->emit         = NULL;
 			e->live         = NULL;
 			e->subopts          = NULL;
 			e->subopts_expanded = false;
@@ -1409,6 +1410,7 @@ static void expand_dir(const char *dir_path, const char *pat,
 						if(dir_opt) {
 							dir_opt->name             = strdup(fname);
 							dir_opt->commands         = NULL;
+							dir_opt->emit             = NULL;
 							dir_opt->live             = NULL;
 							dir_opt->subopts          = sub;
 							dir_opt->subopts_expanded = pop->hierarchy_expanded;
@@ -1447,6 +1449,7 @@ static void expand_dir(const char *dir_path, const char *pat,
 				av[3] = NULL;
 				opt->commands = g_slist_append(NULL, av);
 			}
+			opt->emit             = NULL;
 			opt->live             = NULL;
 			opt->subopts          = NULL;
 			opt->subopts_expanded = false;
