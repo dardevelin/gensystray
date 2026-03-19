@@ -325,7 +325,7 @@ static void stop_live_timers(struct config *config) {
 		config->main_tick_ctx = NULL;
 	}
 
-	/* remove independent timers */
+	/* remove independent timers and unregister ss_lib signals */
 	for(GSList *sl = config->sections; sl; sl = sl->next) {
 		struct section *sec = (struct section *)sl->data;
 		for(GSList *ol = sec->options; ol; ol = ol->next) {
@@ -336,6 +336,7 @@ static void stop_live_timers(struct config *config) {
 				g_source_remove(opt->live->timer_id);
 				opt->live->timer_id = 0;
 			}
+			ss_signal_unregister(opt->live->signal_name);
 		}
 	}
 }
