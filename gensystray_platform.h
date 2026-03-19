@@ -1,5 +1,5 @@
 /*
- * gensystray_osx_menu.h
+ * gensystray_platform.h
  * This file is part of GenSysTray
  * Copyright (C) 2026  Darcy Bras da Silva
  *
@@ -16,9 +16,21 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/
  */
 
-#ifndef GENSYSTRAY_OSX_MENU_H
-#define GENSYSTRAY_OSX_MENU_H
+#ifndef GENSYSTRAY_PLATFORM_H
+#define GENSYSTRAY_PLATFORM_H
 
-#include "gensystray_platform.h"
+#include <gtk/gtk.h>
+
+/* callback type for platform menu dismiss handlers */
+typedef void (*platform_dismiss_fn)(void);
+
+/* install a platform-specific monitor that calls on_outside_click when
+ * the user clicks outside the given menu.  on macOS this uses an NSEvent
+ * global monitor; on Linux this is a no-op (GTK handles it natively).
+ *
+ * call platform_menu_unwatch from the menu's "deactivate" signal.
+ */
+void platform_menu_watch(GtkMenu *menu, platform_dismiss_fn on_outside_click);
+void platform_menu_unwatch(GtkMenu *menu);
 
 #endif

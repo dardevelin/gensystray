@@ -29,8 +29,8 @@
 /* import config monitor for live config reloading */
 #include "gensystray_config_monitor.h"
 
-/* macOS global event monitor for menu dismissal outside GTK windows */
-#include "gensystray_osx_menu.h"
+/* platform-specific menu dismiss (macOS: NSEvent monitor, Linux: no-op) */
+#include "gensystray_platform.h"
 
 /* signal-slot dispatch for live items and IPC */
 #include "deps/ss_lib/include/ss_lib.h"
@@ -441,7 +441,7 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 	g_signal_connect_swapped(G_OBJECT(menu), "deactivate",
 				 G_CALLBACK(g_nullify_pointer), &config->menu);
 	g_signal_connect_swapped(G_OBJECT(menu), "deactivate",
-				 G_CALLBACK(osx_menu_unwatch), menu);
+				 G_CALLBACK(platform_menu_unwatch), menu);
 	g_signal_connect_swapped(G_OBJECT(menu), "deactivate",
 				 G_CALLBACK(disconnect_live_slots), config);
 
@@ -449,7 +449,7 @@ void gensystray_on_menu(GtkStatusIcon *icon, guint button,
 		       gtk_status_icon_position_menu, icon,
 		       button, activate_time);
 
-	osx_menu_watch(menu, popdown_all_menus);
+	platform_menu_watch(menu, popdown_all_menus);
 }
 
 /* if name is NULL, returns configs unchanged. otherwise finds the named

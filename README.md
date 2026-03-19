@@ -1,4 +1,4 @@
-# GenSysTray 2.0.1
+# GenSysTray 2.1.0
 
 A configurable system tray utility written in C. Click a tray icon to get a menu of commands.
 

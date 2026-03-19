@@ -17,11 +17,11 @@
  */
 
 #import <Cocoa/Cocoa.h>
-#include "gensystray_osx_menu.h"
+#include "gensystray_platform.h"
 
 static id event_monitor = nil;
 
-void osx_menu_watch(GtkMenu *menu, osx_dismiss_fn on_outside_click) {
+void platform_menu_watch(GtkMenu *menu, platform_dismiss_fn on_outside_click) {
 	if(event_monitor)
 		return;
 
@@ -33,7 +33,7 @@ void osx_menu_watch(GtkMenu *menu, osx_dismiss_fn on_outside_click) {
 		}];
 }
 
-void osx_menu_unwatch(GtkMenu *menu) {
+void platform_menu_unwatch(GtkMenu *menu) {
 	if(!event_monitor)
 		return;
 	[NSEvent removeMonitor:event_monitor];
