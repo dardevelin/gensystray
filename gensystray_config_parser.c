@@ -92,8 +92,11 @@ static void warn_unknown_keys(const ucl_object_t *obj, const char **known,
  */
 static char *sanitize_signal_name(const char *s)
 {
-	if(!s || '\0' == s[0])
+	if(!s || '\0' == s[0]) {
+		fprintf(stderr, "gensystray: signal name is empty, "
+		        "using 'unnamed' (may cause collisions)\n");
 		return strdup("unnamed");
+	}
 
 	size_t len = strlen(s);
 	char  *buf = malloc(len + 1);
@@ -144,6 +147,8 @@ static char *sanitize_signal_name(const char *s)
 
 	if(0 == out) {
 		free(buf);
+		fprintf(stderr, "gensystray: signal name '%s' sanitizes to empty, "
+		        "using 'unnamed' (may cause collisions)\n", s);
 		return strdup("unnamed");
 	}
 

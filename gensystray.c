@@ -476,7 +476,10 @@ static void start_live_timers(struct config *config) {
 			if(!opt->live)
 				continue;
 
-			ss_signal_register(opt->live->signal_name);
+			ss_error_t err = ss_signal_register(opt->live->signal_name);
+			if(SS_OK != err && SS_ERR_ALREADY_EXISTS != err)
+				fprintf(stderr, "gensystray: failed to register signal '%s': %s\n",
+				        opt->live->signal_name, ss_error_string(err));
 			opt->live->owner = config;
 
 			live_tick(opt);   /* initial value before first interval */
@@ -494,11 +497,19 @@ static void start_live_timers(struct config *config) {
 		/* register watch signals for on watch-* blocks */
 		for(GSList *wl = sec->on_watch_blocks; wl; wl = wl->next) {
 			struct on_watch_block *wb = (struct on_watch_block *)wl->data;
-			if(wb->signal_name) {
-				ss_signal_register(wb->signal_name);
-				ss_connect_ex(wb->signal_name, on_watch_signal, wb,
-					      SS_PRIORITY_NORMAL, &wb->conn);
+			if(!wb->signal_name)
+				continue;
+			ss_error_t werr = ss_signal_register(wb->signal_name);
+			if(SS_OK != werr && SS_ERR_ALREADY_EXISTS != werr) {
+				fprintf(stderr, "gensystray: failed to register watch signal '%s': %s\n",
+				        wb->signal_name, ss_error_string(werr));
+				continue;
 			}
+			ss_error_t cerr = ss_connect_ex(wb->signal_name, on_watch_signal, wb,
+						        SS_PRIORITY_NORMAL, &wb->conn);
+			if(SS_OK != cerr)
+				fprintf(stderr, "gensystray: failed to connect watch signal '%s': %s\n",
+				        wb->signal_name, ss_error_string(cerr));
 		}
 	}
 
