@@ -65,14 +65,20 @@ $(UCL_DIR)/src/%.o: $(UCL_DIR)/src/%.c
 $(SS_DIR)/src/ss_lib.o: $(SS_DIR)/src/ss_lib.c
 	$(CC) -std=gnu11 -w -I$(SS_DIR)/include $(LTO_FLAGS) -c -o $@ $<
 
-RELEASE_CFLAGS = -flto=thin -Os -ffunction-sections -fdata-sections
 ifeq ($(UNAME_S),Darwin)
-  RELEASE_LDFLAGS = -flto=thin -Wl,-dead_strip
+  LTO_FLAG = -flto=thin
 else
-  RELEASE_LDFLAGS = -flto=thin -Wl,--gc-sections
+  LTO_FLAG = -flto
 endif
 
-release: LTO_FLAGS = -flto=thin
+RELEASE_CFLAGS = $(LTO_FLAG) -Os -ffunction-sections -fdata-sections
+ifeq ($(UNAME_S),Darwin)
+  RELEASE_LDFLAGS = $(LTO_FLAG) -Wl,-dead_strip
+else
+  RELEASE_LDFLAGS = $(LTO_FLAG) -Wl,--gc-sections
+endif
+
+release: LTO_FLAGS = $(LTO_FLAG)
 release: CFLAGS += $(RELEASE_CFLAGS)
 release: LDFLAGS += $(RELEASE_LDFLAGS)
 release: clean $(TARGET)
