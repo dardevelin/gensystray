@@ -340,6 +340,20 @@ static void stop_live_timers(struct config *config) {
 	}
 }
 
+/* disconnect all live ss_lib slots for a config when menu closes */
+static void disconnect_live_slots(struct config *config) {
+	for(GSList *sl = config->sections; sl; sl = sl->next) {
+		struct section *sec = (struct section *)sl->data;
+		for(GSList *ol = sec->options; ol; ol = ol->next) {
+			struct option *opt = (struct option *)ol->data;
+			if(!opt->live || 0 == opt->live->live_conn)
+				continue;
+			ss_disconnect_handle(opt->live->live_conn);
+			opt->live->live_conn = 0;
+		}
+	}
+}
+
 /* swap reloadable data fields from src into dst.
  * src's pointers are replaced with dst's old values so freeing src
  * cleans up the old data.
@@ -357,8 +371,6 @@ static void swap_config_data(struct config *dst, struct config *src) {
 	src->icon_path = old_icon_path;
 	src->tooltip   = old_tooltip;
 }
-
-static void disconnect_live_slots(struct config *config);
 
 /* config file change callback — reload policy lives here in main.
  * re-parses the config, filters to the active instance, stops timers,
@@ -466,19 +478,6 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 	gtk_widget_show_all(GTK_WIDGET(menu));
 }
 
-/* disconnect all live ss_lib slots for a config when menu closes */
-static void disconnect_live_slots(struct config *config) {
-	for(GSList *sl = config->sections; sl; sl = sl->next) {
-		struct section *sec = (struct section *)sl->data;
-		for(GSList *ol = sec->options; ol; ol = ol->next) {
-			struct option *opt = (struct option *)ol->data;
-			if(!opt->live || 0 == opt->live->live_conn)
-				continue;
-			ss_disconnect_handle(opt->live->live_conn);
-			opt->live->live_conn = 0;
-		}
-	}
-}
 
 /* hides and releases the tray icon for this instance, then checks if all
  * instances have exited. connected to the "exit" menu item per instance
