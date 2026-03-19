@@ -56,6 +56,34 @@ char *get_config_path(void) {
 	return path;
 }
 
+/* warn about unrecognized keys in a UCL object scope.
+ * known is a NULL-terminated array of accepted key names.
+ * scope_desc is used in the warning message, e.g. "tray", "section 'Notes'".
+ */
+static void warn_unknown_keys(const ucl_object_t *obj, const char **known,
+			      const char *scope_desc)
+{
+	if(!obj)
+		return;
+	ucl_object_iter_t it = NULL;
+	const ucl_object_t *cur;
+	for(; NULL != (cur = ucl_iterate_object(obj, &it, true)); ) {
+		const char *key = ucl_object_key(cur);
+		if(!key)
+			continue;
+		bool found = false;
+		for(const char **k = known; *k; k++) {
+			if(0 == strcmp(key, *k)) {
+				found = true;
+				break;
+			}
+		}
+		if(!found)
+			fprintf(stderr, "gensystray: %s: unknown key '%s' (ignored)\n",
+			        scope_desc, key);
+	}
+}
+
 /* sanitize a string into a signal name segment.
  * rules: ASCII special chars → '_' (collapsed), ASCII letters lowercased,
  * non-ASCII bytes passed through as-is (UTF-8 safe), leading/trailing '_' stripped.
@@ -582,6 +610,13 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 				const char *key = ucl_object_key(item);
 				opt->name = strdup(key ? key : "");
 
+				static const char *known_item[] = {
+					"separator", "command", "live", "order", NULL
+				};
+				char item_desc[128];
+				snprintf(item_desc, sizeof(item_desc), "item '%s'", opt->name);
+				warn_unknown_keys(item, known_item, item_desc);
+
 				const ucl_object_t *sep = ucl_object_lookup(item, "separator");
 				if(sep && ucl_object_toboolean(sep)) {
 					free(opt->name);
@@ -603,6 +638,15 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 
 				const ucl_object_t *live_blk = ucl_object_lookup(item, "live");
 				if(live_blk) {
+					static const char *known_live[] = {
+						"refresh", "update_label", "update_tray_icon",
+						"command", "independent", "signal_name", NULL
+					};
+					char live_desc[128];
+					snprintf(live_desc, sizeof(live_desc),
+					         "item '%s' > live", opt->name);
+					warn_unknown_keys(live_blk, known_live, live_desc);
+
 					const ucl_object_t *ref = ucl_object_lookup(live_blk, "refresh");
 					if(!ref) {
 						fprintf(stderr, "gensystray: item '%s': live block requires 'refresh', e.g. refresh = \"1s\"\n", opt->name);
@@ -940,6 +984,11 @@ static GSList *parse_populates(const ucl_object_t *scope)
 		if(0 != strcmp(ucl_object_key(cur), "populate"))
 			continue;
 
+		static const char *known_populate[] = {
+			"from", "pattern", "watch", "depth", "hierarchy", "item", NULL
+		};
+		warn_unknown_keys(cur, known_populate, "populate");
+
 		const ucl_object_t *from_obj = ucl_object_lookup(cur, "from");
 		if(!from_obj)
 			continue;
@@ -965,6 +1014,11 @@ static GSList *parse_populates(const ucl_object_t *scope)
 
 		const ucl_object_t *item = ucl_object_lookup(cur, "item");
 		if(item) {
+			static const char *known_pop_item[] = {
+				"label", "command", NULL
+			};
+			warn_unknown_keys(item, known_pop_item, "populate > item");
+
 			const ucl_object_t *lbl = ucl_object_lookup(item, "label");
 			const ucl_object_t *cmd = ucl_object_lookup(item, "command");
 			pop->label_tpl = strdup(lbl ? ucl_object_tostring(lbl) : "{filename}");
@@ -1045,6 +1099,15 @@ static GSList *parse_sections(const ucl_object_t *scope, struct config *config,
 
 				const char *key = ucl_object_key(sec_obj);
 				sec->label    = strdup(key ? key : "");
+
+				static const char *known_section[] = {
+					"item", "populate", "expanded", "hierarchy_expanded",
+					"show_label", "separators", "order", NULL
+				};
+				char sec_desc[128];
+				snprintf(sec_desc, sizeof(sec_desc), "section '%s'", sec->label);
+				warn_unknown_keys(sec_obj, known_section, sec_desc);
+
 				sec->options  = parse_options(sec_obj, 1, raw_text);
 				sec->monitors = NULL;
 
@@ -1142,6 +1205,15 @@ static struct config *parse_scope(const char *config_path, const char *name,
 
 	const ucl_object_t *tray = ucl_object_lookup(scope, "tray");
 	if(tray) {
+		static const char *known_tray[] = {
+			"icon", "error_icon", "tooltip", NULL
+		};
+		char tray_desc[128];
+		snprintf(tray_desc, sizeof(tray_desc), "tray%s%s%s",
+		         name ? " (instance '" : "", name ? name : "",
+		         name ? "')" : "");
+		warn_unknown_keys(tray, known_tray, tray_desc);
+
 		const ucl_object_t *icon = ucl_object_lookup(tray, "icon");
 		if(icon) {
 			const char *icon_str = ucl_object_tostring(icon);
@@ -1272,10 +1344,18 @@ GSList *load_config(const char *config_path) {
 
 	// single instance: top-level tray block present
 	if(ucl_object_lookup(root, "tray")) {
+		static const char *known_single[] = {
+			"tray", "item", "section", NULL
+		};
+		warn_unknown_keys(root, known_single, "config (single instance)");
+
 		struct config *config = parse_scope(config_path, NULL, root, raw_text);
 		if(config)
 			configs = g_slist_append(configs, config);
 	} else {
+		static const char *known_multi[] = { "instance", NULL };
+		warn_unknown_keys(root, known_multi, "config (multi instance)");
+
 		// multi instance: iterate instance blocks
 		ucl_object_iter_t it = ucl_object_iterate_new(root);
 		const ucl_object_t *cur;
@@ -1288,6 +1368,15 @@ GSList *load_config(const char *config_path) {
 				ucl_object_iter_t iiit = NULL;
 				const ucl_object_t *inst;
 				for(; NULL != (inst = ucl_iterate_object(elem, &iiit, true)); ) {
+					static const char *known_inst[] = {
+						"tray", "item", "section", NULL
+					};
+					char inst_desc[128];
+					snprintf(inst_desc, sizeof(inst_desc),
+					         "instance '%s'",
+					         ucl_object_key(inst) ? ucl_object_key(inst) : "?");
+					warn_unknown_keys(inst, known_inst, inst_desc);
+
 					struct config *config = parse_scope(config_path,
 									    ucl_object_key(inst),
 									    inst, raw_text);
