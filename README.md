@@ -126,31 +126,40 @@ item "Appended" {
 
 ### Live items
 
-Live items run a command on a timer and display the output as the label.
-`refresh` is required when `live` is set.
+Live items run on a timer via a `live` block. `refresh` is required.
+Supported units: `ms`, `s`, `m`, `h`.
+
+`update_label` runs a command on each tick and displays the stdout as the
+item label. `command` inside `live` runs on the timer as a side effect
+with no label change. Both are optional and independent.
+
+The click action (`command` at item level) is separate from timer behavior.
 
 ```hcl
+# label updates every second, clicking opens Calendar
 item "Clock" {
-  live    = "date '+%H:%M:%S'"
-  refresh = "1s"
-}
-
-item "Uptime" {
-  live    = "uptime | awk '{print $3}'"
-  refresh = "5s"
-}
-```
-
-Supported refresh units: `ms`, `s`, `m`, `h`.
-
-A live item can also have a `command` — the label updates on the timer,
-clicking runs the command:
-
-```hcl
-item "Clock" {
-  live    = "date '+%H:%M:%S'"
-  refresh = "1s"
   command = ["open", "-a", "Calendar"]
+
+  live {
+    refresh      = "1s"
+    update_label = "date '+%H:%M:%S'"
+  }
+}
+
+# label updates every 5 seconds, no click action
+item "Uptime" {
+  live {
+    refresh      = "5s"
+    update_label = "uptime | awk '{print $3}'"
+  }
+}
+
+# runs a sync every 5 minutes, label stays static
+item "Sync" {
+  live {
+    refresh = "5m"
+    command = ["rsync", "-av", "~/docs/", "backup:/docs/"]
+  }
 }
 ```
 
@@ -160,9 +169,11 @@ own timer:
 
 ```hcl
 item "Sensor" {
-  live        = "cat /dev/sensor"
-  refresh     = "100ms"
-  independent = true
+  live {
+    refresh      = "100ms"
+    update_label = "cat /dev/sensor"
+    independent  = true
+  }
 }
 ```
 
