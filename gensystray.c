@@ -136,12 +136,29 @@ static void spawn_commands(GSList *commands) {
 	}
 }
 
+/* emit chain depth guard — prevents infinite recursion from circular
+ * emit chains (A → B → A).  default 16 levels is enough for legitimate
+ * chains while catching accidental cycles before the stack overflows.
+ * overridable per config via tray { max_emit_depth = N }.
+ */
+static int emit_depth     = 0;
+static int max_emit_depth = 16;
+
 /* fire an emit signal. handles the "global." prefix by switching
  * to the __global namespace for cross-instance signals.
  */
 static void fire_emit(const struct emit *em) {
 	if(!em || !em->signal)
 		return;
+
+	if(emit_depth >= max_emit_depth) {
+		fprintf(stderr, "gensystray: emit chain depth exceeded %d "
+		        "(possible cycle at signal '%s')\n",
+		        max_emit_depth, em->signal);
+		return;
+	}
+
+	emit_depth++;
 
 	if(0 == strncmp(em->signal, "global.", 7)) {
 		ss_data_t data = { .type = SS_TYPE_VOID };
@@ -156,6 +173,8 @@ static void fire_emit(const struct emit *em) {
 		else
 			ss_emit_void(em->signal);
 	}
+
+	emit_depth--;
 }
 
 /* context for delegate_system_call_and_emit — carries both commands and emit */
@@ -563,6 +582,10 @@ static void start_live_timers(struct config *config) {
 	GSList *shared_opts = NULL;
 	guint   shared_ms   = 0;
 
+	/* apply config-level max_emit_depth override */
+	if(0 < config->max_emit_depth)
+		max_emit_depth = config->max_emit_depth;
+
 	/* set ss_lib namespace to instance name for signal scoping */
 	ss_set_namespace(config->name ? config->name : "default");
 
@@ -817,10 +840,11 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file,
 		matched->tooltip         = old->tooltip;
 		matched->sections        = old->sections;
 
-		old->icon_path       = new_icon;
-		old->error_icon_path = new_error_icon;
-		old->tooltip         = new_tooltip;
-		old->sections        = new_sections;
+		old->icon_path        = new_icon;
+		old->error_icon_path  = new_error_icon;
+		old->tooltip          = new_tooltip;
+		old->sections         = new_sections;
+		old->max_emit_depth   = matched->max_emit_depth;
 
 		/* reset runtime icon to the new parsed default */
 		free(old->icon_path_current);

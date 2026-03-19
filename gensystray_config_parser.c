@@ -1808,6 +1808,7 @@ static struct config *parse_scope(const char *config_path, const char *name,
 	config->icon_path_current = NULL;
 	config->error_icon_path   = NULL;
 	config->tooltip           = NULL;
+	config->max_emit_depth    = 0;
 	config->sections    = NULL;
 	config->tray_icon       = NULL;
 	config->menu            = NULL;
@@ -1818,7 +1819,7 @@ static struct config *parse_scope(const char *config_path, const char *name,
 	const ucl_object_t *tray = ucl_object_lookup(scope, "tray");
 	if(tray) {
 		static const char *known_tray[] = {
-			"icon", "error_icon", "tooltip", NULL
+			"icon", "error_icon", "tooltip", "max_emit_depth", NULL
 		};
 		char tray_desc[128];
 		snprintf(tray_desc, sizeof(tray_desc), "tray%s%s%s",
@@ -1850,6 +1851,15 @@ static struct config *parse_scope(const char *config_path, const char *name,
 		const ucl_object_t *tooltip = ucl_object_lookup(tray, "tooltip");
 		if(tooltip)
 			config->tooltip = strdup(ucl_object_tostring(tooltip));
+
+		const ucl_object_t *med = ucl_object_lookup(tray, "max_emit_depth");
+		if(med) {
+			int v = (int)ucl_object_toint(med);
+			if(0 < v)
+				config->max_emit_depth = v;
+			else
+				fprintf(stderr, "gensystray: tray.max_emit_depth must be a positive integer\n");
+		}
 	} else if(name) {
 		fprintf(stderr, "gensystray: instance '%s': missing 'tray' block\n", name);
 	}

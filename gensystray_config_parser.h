@@ -193,6 +193,7 @@ struct config {
 	char *icon_path_current;    /* runtime value, initialized from icon_path, overridable */
 	char *error_icon_path;      /* user override for error icon, NULL = use built-in */
 	char *tooltip;
+	int   max_emit_depth;       /* max emit chain depth, 0 = use default (16) */
 	GSList *sections; /* ordered list of struct section */
 	void *tray_icon;  /* GtkStatusIcon *, kept alive here */
 	void *menu;       /* GtkMenu *, currently open menu or NULL */
