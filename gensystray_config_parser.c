@@ -146,6 +146,59 @@ static guint parse_duration_ms(const char *s) {
 	return 0;
 }
 
+/* normalize a UCL command value into a heap-allocated argv array.
+ * UCL array  → each element becomes an argv entry.
+ * UCL string → wrapped as ["sh", "-c", str, NULL] for shell execution.
+ * returns NULL if obj is NULL or empty.
+ * caller must free with g_strfreev.
+ */
+static char **parse_argv(const ucl_object_t *obj)
+{
+	if(!obj)
+		return NULL;
+
+	if(UCL_ARRAY == ucl_object_type(obj)) {
+		ucl_object_iter_t it = NULL;
+		const ucl_object_t *elem;
+		GPtrArray *arr = g_ptr_array_new();
+		for(; NULL != (elem = ucl_iterate_object(obj, &it, false)); )
+			g_ptr_array_add(arr, g_strdup(ucl_object_tostring(elem)));
+		g_ptr_array_add(arr, NULL);
+		return (char **)g_ptr_array_free(arr, false);
+	}
+
+	/* string or heredoc — wrap in shell -c.
+	 * shebang (#!) on the first line overrides the shell for this item.
+	 * otherwise falls back to $SHELL env var, then "sh" as last resort.
+	 */
+	const char *s = ucl_object_tostring(obj);
+	if(!s || '\0' == s[0])
+		return NULL;
+
+	char *shell = NULL;
+
+	if('#' == s[0] && '!' == s[1]) {
+		/* extract interpreter from shebang line */
+		const char *end = strchr(s + 2, '\n');
+		size_t len = end ? (size_t)(end - (s + 2)) : strlen(s + 2);
+		shell = g_strndup(s + 2, len);
+		/* skip past the shebang line for the script body */
+		s = end ? end + 1 : s + 2 + len;
+	}
+
+	if(!shell) {
+		const char *env_shell = getenv("SHELL");
+		shell = g_strdup(env_shell ? env_shell : "sh");
+	}
+
+	char **argv = g_new(char *, 4);
+	argv[0] = shell;
+	argv[1] = g_strdup("-c");
+	argv[2] = g_strdup(s);
+	argv[3] = NULL;
+	return argv;
+}
+
 static int option_order_cmp(gconstpointer a, gconstpointer b) {
 	return ((const struct option *)a)->order - ((const struct option *)b)->order;
 }
@@ -163,8 +216,8 @@ static void option_dalloc(void *data) {
 	if(0 != opt->timer_id)
 		g_source_remove(opt->timer_id);
 	free(opt->name);
-	free(opt->command);
-	free(opt->live_cmd);
+	g_strfreev(opt->command_argv);
+	g_strfreev(opt->live_argv);
 	free(opt->signal_name);
 	free(opt->live_output);
 	free(opt);
@@ -221,18 +274,15 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 				const ucl_object_t *sep = ucl_object_lookup(item, "separator");
 				if(sep && ucl_object_toboolean(sep)) {
 					free(opt->name);
-					opt->name    = strdup("--");
-					opt->command = strdup("--");
-					opt->order   = -1;
+					opt->name         = strdup("--");
+					opt->command_argv = NULL;
+					opt->order        = -1;
 					unordered = g_slist_prepend(unordered, opt);
 					continue;
 				}
 
-				const ucl_object_t *cmd = ucl_object_lookup(item, "command");
-				opt->command = strdup(cmd ? ucl_object_tostring(cmd) : "");
-
 				/* live item fields */
-				opt->live_cmd    = NULL;
+				opt->live_argv   = NULL;
 				opt->signal_name = NULL;
 				opt->refresh_ms  = 0;
 				opt->tick_counter = 0;
@@ -242,19 +292,22 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 				opt->live_label  = NULL;
 				opt->live_conn   = 0;
 
+				const ucl_object_t *cmd = ucl_object_lookup(item, "command");
+				opt->command_argv = parse_argv(cmd);
+
 				const ucl_object_t *live = ucl_object_lookup(item, "live");
 				if(live) {
 					const ucl_object_t *ref = ucl_object_lookup(item, "refresh");
 					if(!ref) {
 						fprintf(stderr, "[!] item '%s': live requires refresh\n", opt->name);
 						free(opt->name);
-						opt->name    = strdup("[!] missing refresh");
-						opt->command = strdup("");
-						opt->order   = -1;
+						opt->name         = strdup("[!] missing refresh");
+						opt->command_argv = NULL;
+						opt->order        = -1;
 						unordered = g_slist_prepend(unordered, opt);
 						continue;
 					}
-					opt->live_cmd    = strdup(ucl_object_tostring(live));
+					opt->live_argv   = parse_argv(live);
 					opt->refresh_ms  = parse_duration_ms(ucl_object_tostring(ref));
 					opt->tick_counter = 0;
 
@@ -330,9 +383,18 @@ static void expand_dir(const char *dir_path, const char *pat,
 			char buf[512];
 			snprintf(buf, sizeof(buf), "[!] watch error: %s",
 				 err ? err->message : dir_path);
-			e->name    = strdup(buf);
-			e->command = strdup("");
-			e->order   = -1;
+			e->name         = strdup(buf);
+			e->command_argv = NULL;
+			e->live_argv    = NULL;
+			e->signal_name  = NULL;
+			e->refresh_ms   = 0;
+			e->tick_counter = 0;
+			e->independent  = false;
+			e->live_output  = NULL;
+			e->timer_id     = 0;
+			e->live_label   = NULL;
+			e->live_conn    = 0;
+			e->order        = -1;
 			*opts = g_slist_prepend(*opts, e);
 		}
 		if(err) g_error_free(err);
@@ -364,9 +426,28 @@ static void expand_dir(const char *dir_path, const char *pat,
 
 		struct option *opt = malloc(sizeof(struct option));
 		if(opt) {
-			opt->name    = strdup(label);
-			opt->command = strdup(cmd);
-			opt->order   = -1;
+			opt->name         = strdup(label);
+			opt->command_argv = parse_argv(NULL); /* built from template string below */
+			/* wrap the substituted command string as sh -c argv */
+			if(cmd && '\0' != cmd[0]) {
+				g_strfreev(opt->command_argv);
+				char **av = g_new(char *, 4);
+				av[0] = g_strdup("sh");
+				av[1] = g_strdup("-c");
+				av[2] = g_strdup(cmd);
+				av[3] = NULL;
+				opt->command_argv = av;
+			}
+			opt->live_argv    = NULL;
+			opt->signal_name  = NULL;
+			opt->refresh_ms   = 0;
+			opt->tick_counter = 0;
+			opt->independent  = false;
+			opt->live_output  = NULL;
+			opt->timer_id     = 0;
+			opt->live_label   = NULL;
+			opt->live_conn    = 0;
+			opt->order        = -1;
 			*opts = g_slist_prepend(*opts, opt);
 		}
 

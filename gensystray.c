@@ -67,11 +67,14 @@ static void check_all_exited(void) {
 	gtk_main_quit();
 }
 
-/* valid "activate" signal callback. spawns the associated command in a
- * child process via sh -c, keeping the ui responsive
+/* valid "activate" signal callback. spawns the associated argv in a child
+ * process, keeping the ui responsive. user_data is char ** argv, already
+ * normalized by the parser (array = direct exec, string = ["sh","-c",cmd]).
  */
 void delegate_system_call(GtkWidget *widget, gpointer user_data) {
-	char *argv[] = { "sh", "-c", (char *)user_data, NULL };
+	char **argv = (char **)user_data;
+	if(!argv || !argv[0])
+		return;
 	g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL);
 }
 
@@ -85,7 +88,7 @@ static void on_live_signal(const ss_data_t *data, void *user_data) {
 		gtk_label_set_text(GTK_LABEL(label), output);
 }
 
-/* run opt->live_cmd synchronously, capture first line of stdout,
+/* run opt->live_argv synchronously, capture first line of stdout,
  * update opt->live_output, emit via ss_lib signal.
  * returns TRUE so g_timeout_add keeps firing.
  */
@@ -95,10 +98,9 @@ static gboolean live_tick(gpointer user_data) {
 	char *out    = NULL;
 	char *err    = NULL;
 	int   status = 0;
-	char *argv[] = { "sh", "-c", opt->live_cmd, NULL };
 
 	GError *gerr = NULL;
-	g_spawn_sync(NULL, argv, NULL,
+	g_spawn_sync(NULL, opt->live_argv, NULL,
 		     G_SPAWN_SEARCH_PATH,
 		     NULL, NULL,
 		     &out, &err, &status, &gerr);
@@ -179,7 +181,7 @@ static void start_live_timers(struct config *config) {
 		struct section *sec = (struct section *)sl->data;
 		for(GSList *ol = sec->options; ol; ol = ol->next) {
 			struct option *opt = (struct option *)ol->data;
-			if(!opt->live_cmd)
+			if(!opt->live_argv)
 				continue;
 
 			ss_signal_register(opt->signal_name);
@@ -220,9 +222,9 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 	struct option *option = (struct option*)data;
 	GtkWidget *menu_item = NULL;
 
-	if('-' == option->name[0] && '-' == option->command[0]) {
+	if('-' == option->name[0] && NULL == option->command_argv) {
 		menu_item = gtk_separator_menu_item_new();
-	} else if(option->live_cmd) {
+	} else if(option->live_argv) {
 		/* live item — label widget connected as ss_lib slot while menu is open */
 		const char *text = option->live_output ? option->live_output : option->name;
 		GtkWidget  *label = gtk_label_new(text);
@@ -232,6 +234,10 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 		option->live_label = label;
 		ss_connect_ex(option->signal_name, on_live_signal, label,
 			      SS_PRIORITY_NORMAL, &option->live_conn);
+		if(option->command_argv)
+			g_signal_connect(G_OBJECT(menu_item), "activate",
+					 G_CALLBACK(delegate_system_call),
+					 option->command_argv);
 		g_signal_connect_swapped(G_OBJECT(menu_item), "destroy",
 					 G_CALLBACK(g_nullify_pointer),
 					 &option->live_label);
@@ -239,7 +245,7 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 		menu_item = gtk_menu_item_new_with_label(option->name);
 		g_signal_connect(G_OBJECT(menu_item), "activate",
 				 G_CALLBACK(delegate_system_call),
-				 option->command);
+				 option->command_argv);
 	}
 
 	gtk_menu_shell_append((GtkMenuShell*)menu, menu_item);
@@ -252,7 +258,7 @@ static void disconnect_live_slots(struct config *config) {
 		struct section *sec = (struct section *)sl->data;
 		for(GSList *ol = sec->options; ol; ol = ol->next) {
 			struct option *opt = (struct option *)ol->data;
-			if(!opt->live_cmd || 0 == opt->live_conn)
+			if(!opt->live_argv || 0 == opt->live_conn)
 				continue;
 			ss_disconnect_handle(opt->live_conn);
 			opt->live_conn = 0;

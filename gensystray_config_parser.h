@@ -37,12 +37,13 @@ typedef enum {
  * through out the code
  */
 struct option {
-	char *name;
-	char *command;
-	int   order;       /* -1 = unordered (declaration order) */
+	char  *name;
+	char **command_argv;  /* click action argv, NULL if none. array = direct exec,
+	                       * string/heredoc normalized to ["sh", "-c", cmd, NULL] */
+	int    order;         /* -1 = unordered (declaration order) */
 
 	/* live item fields — NULL/0 for static items */
-	char    *live_cmd;      /* shell command to poll, NULL = static */
+	char   **live_argv;     /* timer command argv, NULL = static. same normalization */
 	char    *signal_name;   /* sanitized signal name, derived from name or explicit */
 	guint    refresh_ms;    /* polling interval in milliseconds */
 	guint    tick_counter;  /* master tick countdown, reset when it fires */
