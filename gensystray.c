@@ -494,6 +494,23 @@ static GSList *filter_instance(GSList *configs, const char *name) {
 	return g_slist_prepend(NULL, match);
 }
 
+/* size-changed callback for file-path icons: reload pixbuf at the exact size
+ * the tray requests so icons display at 22x22, 24x24, etc. without forced
+ * scaling to 16x16.  user_data is the expanded file path (strdup'd).
+ */
+static gboolean on_icon_size_changed(GtkStatusIcon *icon, gint size,
+				     gpointer user_data)
+{
+	const char *path = (const char *)user_data;
+	GdkPixbuf  *pb   = gdk_pixbuf_new_from_file_at_size(path, size, size, NULL);
+	if(pb) {
+		gtk_status_icon_set_from_pixbuf(icon, pb);
+		g_object_unref(pb);
+		return TRUE;  /* handled — suppress GTK's default scaling */
+	}
+	return FALSE;
+}
+
 /* creates a GtkStatusIcon for the given config instance, sets its icon
  * and tooltip, connects the popup-menu signal, and stores the icon pointer
  * in config->tray_icon to keep it alive
@@ -506,7 +523,10 @@ static GtkStatusIcon *init_tray(struct config *config) {
 		icon = gtk_status_icon_new_from_icon_name("application-x-executable");
 	} else if('/' == config->icon_path[0] || '.' == config->icon_path[0]
 	          || '~' == config->icon_path[0]) {
-		/* absolute, relative, or ~ path → load as file */
+		/* absolute, relative, or ~ path → load as file.
+		 * connect size-changed so the pixbuf is reloaded at the exact
+		 * size the tray requests (22, 24, 32 …) rather than 16x16.
+		 */
 		char *path = config->icon_path;
 		char *expanded = NULL;
 		if('~' == path[0]) {
@@ -514,9 +534,15 @@ static GtkStatusIcon *init_tray(struct config *config) {
 			path = expanded;
 		}
 		icon = gtk_status_icon_new_from_file(path);
+		/* pass a strdup of the resolved path; freed when icon is destroyed */
+		g_signal_connect_data(G_OBJECT(icon), "size-changed",
+				      G_CALLBACK(on_icon_size_changed),
+				      strdup(path),
+				      (GClosureNotify)free, 0);
 		g_free(expanded);
 	} else {
-		/* no path separator → treat as XDG theme icon name */
+		/* no path separator → treat as XDG theme icon name;
+		 * GTK handles size negotiation automatically for theme icons */
 		icon = gtk_status_icon_new_from_icon_name(config->icon_path);
 	}
 
