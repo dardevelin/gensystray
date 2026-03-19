@@ -22,6 +22,8 @@
 
 #include "gensystray_platform.h"
 
+void platform_init(void) {}
+
 void platform_menu_watch(GtkMenu *menu, platform_dismiss_fn on_outside_click) {
 	(void)menu;
 	(void)on_outside_click;

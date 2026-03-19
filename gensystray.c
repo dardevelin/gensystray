@@ -811,6 +811,7 @@ static GtkStatusIcon *init_tray(struct config *config) {
 int main(int argc, char **argv) {
 	ss_init();
 	gtk_init(&argc, &argv);
+	platform_init();
 
 	/* parse --instance <name> before gtk consumes argv */
 	for(int i = 1; i < argc; i++) {

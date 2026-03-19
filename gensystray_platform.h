@@ -30,6 +30,13 @@ typedef void (*platform_dismiss_fn)(void);
  *
  * call platform_menu_unwatch from the menu's "deactivate" signal.
  */
+/* call once after gtk_init to apply platform-specific app-level settings.
+ * on macOS: forces NSApplicationActivationPolicyAccessory so the app never
+ * appears in the Dock or the Cmd+Tab switcher, regardless of LSUIElement.
+ * on Linux: no-op.
+ */
+void platform_init(void);
+
 void platform_menu_watch(GtkMenu *menu, platform_dismiss_fn on_outside_click);
 void platform_menu_unwatch(GtkMenu *menu);
 

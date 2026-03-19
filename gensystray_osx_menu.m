@@ -21,6 +21,10 @@
 
 static id event_monitor = nil;
 
+void platform_init(void) {
+	[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+}
+
 void platform_menu_watch(GtkMenu *menu, platform_dismiss_fn on_outside_click) {
 	if(event_monitor)
 		return;

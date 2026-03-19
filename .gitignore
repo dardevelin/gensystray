@@ -4,3 +4,4 @@ gensystray
 *.dSYM/
 GenSysTray.app
 *.zip
+.msign/
