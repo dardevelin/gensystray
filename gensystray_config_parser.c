@@ -1126,8 +1126,10 @@ static struct config *parse_scope(const char *config_path, const char *name,
 	config->icon_path   = NULL;
 	config->tooltip     = NULL;
 	config->sections    = NULL;
-	config->tray_icon   = NULL;
-	config->menu        = NULL;
+	config->tray_icon       = NULL;
+	config->menu            = NULL;
+	config->main_timer_id = 0;
+	config->main_tick_ctx      = NULL;
 
 	const ucl_object_t *tray = ucl_object_lookup(scope, "tray");
 	if(tray) {

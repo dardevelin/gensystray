@@ -235,17 +235,17 @@ static guint gcd(guint a, guint b) {
 	return a;
 }
 
-/* context for the master tick — holds the GCD interval and the list of opts */
-struct master_ctx {
+/* context for the main tick — holds the GCD interval and the list of opts */
+struct main_tick_ctx {
 	guint   interval_ms;
 	GSList *opts;
 };
 
-/* master tick callback — fires at GCD interval, each item tracks its own
+/* main tick callback — fires at GCD interval, each item tracks its own
  * countdown. independent items use their own timers and are not in this list.
  */
-static gboolean master_tick(gpointer user_data) {
-	struct master_ctx *ctx = (struct master_ctx *)user_data;
+static gboolean main_tick(gpointer user_data) {
+	struct main_tick_ctx *ctx = (struct main_tick_ctx *)user_data;
 	for(GSList *l = ctx->opts; l; l = l->next) {
 		struct option *opt = (struct option *)l->data;
 		opt->live->tick_counter += ctx->interval_ms;
@@ -259,11 +259,11 @@ static gboolean master_tick(gpointer user_data) {
 
 /* start timers for all live options across all sections of config.
  * independent items get their own g_timeout_add timer.
- * all other live items share one master tick at GCD of their refresh intervals.
+ * all other live items share one main tick at GCD of their refresh intervals.
  */
 static void start_live_timers(struct config *config) {
-	GSList *master_opts = NULL;
-	guint   master_ms   = 0;
+	GSList *shared_opts = NULL;
+	guint   shared_ms   = 0;
 
 	/* set ss_lib namespace to instance name for signal scoping */
 	ss_set_namespace(config->name ? config->name : "default");
@@ -284,24 +284,58 @@ static void start_live_timers(struct config *config) {
 				continue;
 			}
 
-			master_opts = g_slist_prepend(master_opts, opt);
-			master_ms   = 0 == master_ms ? opt->live->refresh_ms
-			                             : gcd(master_ms, opt->live->refresh_ms);
+			shared_opts = g_slist_prepend(shared_opts, opt);
+			shared_ms   = 0 == shared_ms ? opt->live->refresh_ms
+			                             : gcd(shared_ms, opt->live->refresh_ms);
 		}
 	}
 
-	if(!master_opts)
+	if(!shared_opts)
 		return;
 
-	struct master_ctx *ctx = malloc(sizeof(struct master_ctx));
+	struct main_tick_ctx *ctx = malloc(sizeof(struct main_tick_ctx));
 	if(!ctx) {
-		g_slist_free(master_opts);
+		g_slist_free(shared_opts);
 		return;
 	}
-	ctx->interval_ms = master_ms;
-	ctx->opts        = master_opts;
+	ctx->interval_ms = shared_ms;
+	ctx->opts        = shared_opts;
 
-	g_timeout_add(master_ms, master_tick, ctx);
+	config->main_tick_ctx = ctx;
+	config->main_timer_id = g_timeout_add(shared_ms, main_tick, ctx);
+}
+
+/* stop all live timers for a config: main tick and independent timers.
+ * frees main_tick_ctx and its opt list. safe to call if no timers are running.
+ */
+static void stop_live_timers(struct config *config) {
+	/* remove main tick timer */
+	if(0 != config->main_timer_id) {
+		g_source_remove(config->main_timer_id);
+		config->main_timer_id = 0;
+	}
+
+	/* free main_tick_ctx and its opt list */
+	if(config->main_tick_ctx) {
+		struct main_tick_ctx *ctx = (struct main_tick_ctx *)config->main_tick_ctx;
+		g_slist_free(ctx->opts);
+		free(ctx);
+		config->main_tick_ctx = NULL;
+	}
+
+	/* remove independent timers */
+	for(GSList *sl = config->sections; sl; sl = sl->next) {
+		struct section *sec = (struct section *)sl->data;
+		for(GSList *ol = sec->options; ol; ol = ol->next) {
+			struct option *opt = (struct option *)ol->data;
+			if(!opt->live)
+				continue;
+			if(0 != opt->live->timer_id) {
+				g_source_remove(opt->live->timer_id);
+				opt->live->timer_id = 0;
+			}
+		}
+	}
 }
 
 /* valid GFunc signature for g_slist_foreach. builds one GtkMenuItem per
@@ -599,6 +633,7 @@ int main(int argc, char **argv) {
 
 	for(GSList *l = all_configs; l; l = l->next) {
 		struct config *c = (struct config *)l->data;
+		stop_live_timers(c);
 		if(c->tray_icon)
 			g_object_unref(c->tray_icon);
 	}

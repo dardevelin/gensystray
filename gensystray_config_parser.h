@@ -145,7 +145,9 @@ struct config {
 	char *tooltip;
 	GSList *sections; /* ordered list of struct section */
 	void *tray_icon;  /* GtkStatusIcon *, kept alive here */
-	void *menu;      /* GtkMenu *, currently open menu or NULL */
+	void *menu;       /* GtkMenu *, currently open menu or NULL */
+	guint  main_timer_id; /* GLib source ID for master tick, 0 = none */
+	void  *main_tick_ctx;      /* struct main_tick_ctx *, owned by live engine */
 };
 
 /* allocates, populates and returns a GSList of struct config from config_path.
