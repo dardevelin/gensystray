@@ -77,10 +77,11 @@ struct live {
 
 struct option {
 	char       *name;
-	GSList     *commands;  /* list of char** argv, click actions, NULL if none */
-	int         order;     /* -1 = unordered (declaration order) */
-	struct live *live;     /* NULL for static items */
-	GSList     *subopts;   /* child options for hierarchy submenus, NULL if leaf */
+	GSList     *commands;        /* list of char** argv, click actions, NULL if none */
+	int         order;           /* -1 = unordered (declaration order) */
+	struct live *live;           /* NULL for static items */
+	GSList     *subopts;         /* child options for hierarchy submenus, NULL if leaf */
+	bool        subopts_expanded;/* true = render subopts flat/inline, false = nested submenu */
 };
 
 /* context passed to GFileMonitor callbacks for glob populate sources.
@@ -98,13 +99,14 @@ struct monitor_ctx {
  * watch = true: a GFileMonitor watches the directory and re-expands on change.
  */
 struct populate {
-	char  *from;        /* source type: "glob", others TBD */
-	char  *pattern;     /* glob pattern, ~ expanded at runtime */
-	char  *label_tpl;   /* item label template, e.g. "{filename}" */
-	char  *command_tpl; /* item command template, e.g. "nvim {filepath}" */
-	bool   watch;       /* true = monitor directory for changes */
-	int    depth;       /* 0 = current dir only, N = N levels, -1 = unlimited */
-	bool   hierarchy;   /* true = subdirs become submenus, false = flat list */
+	char  *from;               /* source type: "glob", others TBD */
+	char  *pattern;            /* glob pattern, ~ expanded at runtime */
+	char  *label_tpl;          /* item label template, e.g. "{filename}" */
+	char  *command_tpl;        /* item command template, e.g. "nvim {filepath}" */
+	bool   watch;              /* true = monitor directory for changes */
+	int    depth;              /* 0 = current dir only, N = N levels, -1 = unlimited */
+	bool   hierarchy;          /* true = subdirs become submenus, false = flat list */
+	bool   hierarchy_expanded; /* true = subdir submenus render flat, false = collapsed (default) */
 };
 
 /* a section is a named submenu containing a list of options.
@@ -115,12 +117,13 @@ struct populate {
  * items within an anonymous section follow declaration order.
  */
 struct section {
-	char   *label;          /* NULL = anonymous/flat */
-	GSList *options;        /* expanded struct option list */
-	GSList *populates;      /* struct populate list for dynamic sources */
-	GSList *monitors;       /* GFileMonitor* list for watched sources */
-	int     order;          /* -1 = unordered (declaration order) */
-	bool    expanded;       /* false = submenu (default), true = inline */
+	char   *label;               /* NULL = anonymous/flat */
+	GSList *options;             /* expanded struct option list */
+	GSList *populates;           /* struct populate list for dynamic sources */
+	GSList *monitors;            /* GFileMonitor* list for watched sources */
+	int     order;               /* -1 = unordered (declaration order) */
+	bool    expanded;            /* false = submenu (default), true = inline */
+	bool    hierarchy_expanded;  /* true = hierarchy subdirs render flat, false = collapsed submenus */
 	bool               show_label;  /* true = show name as header (default) */
 	section_separators separators;  /* controls top/bottom separator rendering */
 };

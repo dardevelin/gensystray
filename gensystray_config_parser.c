@@ -589,8 +589,9 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 					opt->name     = strdup("--");
 					opt->commands = NULL;
 					opt->live     = NULL;
-					opt->subopts  = NULL;
-					opt->order    = -1;
+					opt->subopts          = NULL;
+					opt->subopts_expanded = false;
+					opt->order            = -1;
 					unordered = g_slist_prepend(unordered, opt);
 					continue;
 				}
@@ -598,7 +599,8 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 				const ucl_object_t *cmd = ucl_object_lookup(item, "command");
 				opt->commands = parse_command_list(cmd);
 				opt->live         = NULL;
-				opt->subopts      = NULL;
+				opt->subopts          = NULL;
+				opt->subopts_expanded = false;
 
 				const ucl_object_t *live_blk = ucl_object_lookup(item, "live");
 				if(live_blk) {
@@ -742,8 +744,9 @@ static void expand_dir(const char *dir_path, const char *pat,
 			e->name         = strdup(buf);
 			e->commands = NULL;
 			e->live         = NULL;
-			e->subopts      = NULL;
-			e->order        = -1;
+			e->subopts          = NULL;
+			e->subopts_expanded = false;
+			e->order            = -1;
 			*opts = g_slist_prepend(*opts, e);
 		}
 		if(err) g_error_free(err);
@@ -767,11 +770,12 @@ static void expand_dir(const char *dir_path, const char *pat,
 					if(sub) {
 						struct option *dir_opt = malloc(sizeof(struct option));
 						if(dir_opt) {
-							dir_opt->name     = strdup(fname);
-							dir_opt->commands = NULL;
-							dir_opt->live     = NULL;
-							dir_opt->subopts  = sub;
-							dir_opt->order    = -1;
+							dir_opt->name             = strdup(fname);
+							dir_opt->commands         = NULL;
+							dir_opt->live             = NULL;
+							dir_opt->subopts          = sub;
+							dir_opt->subopts_expanded = pop->hierarchy_expanded;
+							dir_opt->order            = -1;
 							*opts = g_slist_prepend(*opts, dir_opt);
 						}
 					}
@@ -806,9 +810,10 @@ static void expand_dir(const char *dir_path, const char *pat,
 				av[3] = NULL;
 				opt->commands = g_slist_append(NULL, av);
 			}
-			opt->live    = NULL;
-			opt->subopts = NULL;
-			opt->order   = -1;
+			opt->live             = NULL;
+			opt->subopts          = NULL;
+			opt->subopts_expanded = false;
+			opt->order            = -1;
 			*opts = g_slist_prepend(*opts, opt);
 		}
 
@@ -949,7 +954,8 @@ static GSList *parse_populates(const ucl_object_t *scope)
 		pop->depth = d ? (int)ucl_object_toint(d) : 0;
 
 		const ucl_object_t *h = ucl_object_lookup(cur, "hierarchy");
-		pop->hierarchy = h && ucl_object_toboolean(h);
+		pop->hierarchy          = h && ucl_object_toboolean(h);
+		pop->hierarchy_expanded = false; /* set by parse_sections after reading section fields */
 
 		const ucl_object_t *item = ucl_object_lookup(cur, "item");
 		if(item) {
@@ -1036,9 +1042,22 @@ static GSList *parse_sections(const ucl_object_t *scope, struct config *config,
 				sec->options  = parse_options(sec_obj, 1, raw_text);
 				sec->monitors = NULL;
 
+				/* parse section display fields first so hierarchy_expanded
+				 * is known before expand_glob runs */
+				const ucl_object_t *exp = ucl_object_lookup(sec_obj, "expanded");
+				sec->expanded = exp && ucl_object_toboolean(exp);
+
+				const ucl_object_t *hexe = ucl_object_lookup(sec_obj, "hierarchy_expanded");
+				sec->hierarchy_expanded = hexe && ucl_object_toboolean(hexe);
+
+				const ucl_object_t *sl = ucl_object_lookup(sec_obj, "show_label");
+				sec->show_label = !sl || ucl_object_toboolean(sl);
+
 				sec->populates = parse_populates(sec_obj);
 				for(GSList *pl = sec->populates; pl; pl = pl->next) {
 					struct populate *pop = (struct populate *)pl->data;
+					/* propagate section-level hierarchy_expanded to populate */
+					pop->hierarchy_expanded = sec->hierarchy_expanded;
 					if(0 != strcmp(pop->from, "glob"))
 						continue;
 					sec->options = g_slist_concat(sec->options,
@@ -1056,12 +1075,6 @@ static GSList *parse_sections(const ucl_object_t *scope, struct config *config,
 					watch_dir(base, sec, config, pop, pop->depth);
 					g_free(base);
 				}
-
-				const ucl_object_t *exp = ucl_object_lookup(sec_obj, "expanded");
-				sec->expanded = exp && ucl_object_toboolean(exp);
-
-				const ucl_object_t *sl = ucl_object_lookup(sec_obj, "show_label");
-				sec->show_label = !sl || ucl_object_toboolean(sl);
 
 				const ucl_object_t *sp = ucl_object_lookup(sec_obj, "separators");
 				if(!sp || (ucl_object_type(sp) == UCL_BOOLEAN && ucl_object_toboolean(sp))) {
