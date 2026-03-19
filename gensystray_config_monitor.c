@@ -17,40 +17,13 @@
  */
 
 #include <stdio.h>
-#include <stdlib.h>
 
 #include "gensystray_config_monitor.h"
 
-static void on_cfg_changed(GFileMonitor *monitor, GFile *file, GFile *other_file,
-			   GFileMonitorEvent event_type, gpointer user_data) {
-	struct config *config = (struct config *)user_data;
-
-	GSList *updated_list = load_config(config->config_path);
-	if(!updated_list) {
-		fprintf(stderr, "gensystray: config reload failed, keeping current config\n");
-		return;
-	}
-	struct config *updated = (struct config *)updated_list->data;
-
-	// swap the reloadable fields, free the old ones via free_config trick
-	GSList *old_sections  = config->sections;
-	char   *old_icon_path = config->icon_path;
-	char   *old_tooltip   = config->tooltip;
-
-	config->sections  = updated->sections;
-	config->icon_path = updated->icon_path;
-	config->tooltip   = updated->tooltip;
-
-	// point updated at old data so free_config cleans it up
-	updated->sections  = old_sections;
-	updated->icon_path = old_icon_path;
-	updated->tooltip   = old_tooltip;
-
-	free_configs(updated_list);
-}
-
-GFileMonitor *monitor_config(const char *config_path, struct config *config) {
-	if(!config_path || !config)
+GFileMonitor *monitor_config(const char *config_path,
+			     config_changed_fn on_changed,
+			     gpointer user_data) {
+	if(!config_path || !on_changed)
 		return NULL;
 
 	GFile *cfg_gfile = g_file_new_for_path(config_path);
@@ -61,7 +34,7 @@ GFileMonitor *monitor_config(const char *config_path, struct config *config) {
 		return NULL;
 
 	g_signal_connect(G_OBJECT(monitor), "changed",
-			 G_CALLBACK(on_cfg_changed), config);
+			 G_CALLBACK(on_changed), user_data);
 
 	return monitor;
 }

@@ -36,11 +36,13 @@
 #include "deps/ss_lib/include/ss_lib.h"
 
 
-/* global list of all loaded instances — used by popdown_all_menus and
- * check_all_exited to coordinate across instances without passing state
- * through signal callbacks
+/* app state — used by popdown_all_menus, check_all_exited, and the
+ * config reload policy to coordinate across instances without passing
+ * state through signal callbacks
  */
-static GSList *all_configs = NULL;
+static GSList     *all_configs      = NULL;
+static char       *app_cfg_path     = NULL;
+static const char *app_instance     = NULL;
 
 /* dismiss every open instance menu. called when any tray icon is clicked
  * or when a click outside all GTK windows is detected by the osx monitor
@@ -338,6 +340,69 @@ static void stop_live_timers(struct config *config) {
 	}
 }
 
+/* swap reloadable data fields from src into dst.
+ * src's pointers are replaced with dst's old values so freeing src
+ * cleans up the old data.
+ */
+static void swap_config_data(struct config *dst, struct config *src) {
+	GSList *old_sections  = dst->sections;
+	char   *old_icon_path = dst->icon_path;
+	char   *old_tooltip   = dst->tooltip;
+
+	dst->sections  = src->sections;
+	dst->icon_path = src->icon_path;
+	dst->tooltip   = src->tooltip;
+
+	src->sections  = old_sections;
+	src->icon_path = old_icon_path;
+	src->tooltip   = old_tooltip;
+}
+
+/* config file change callback — reload policy lives here in main.
+ * re-parses the config, filters to the active instance, stops timers,
+ * swaps data, and restarts timers for each running instance.
+ */
+static void on_cfg_changed(GFileMonitor *monitor, GFile *file,
+			   GFile *other_file, GFileMonitorEvent event_type,
+			   gpointer user_data)
+{
+	(void)monitor; (void)file; (void)other_file;
+	(void)event_type; (void)user_data;
+
+	GSList *new_list = load_config(app_cfg_path);
+	if(!new_list) {
+		fprintf(stderr, "gensystray: config reload failed, keeping current config\n");
+		return;
+	}
+
+	/* match running instances by name and swap their data */
+	for(GSList *ol = all_configs; ol; ol = ol->next) {
+		struct config *old = (struct config *)ol->data;
+
+		struct config *matched = NULL;
+		for(GSList *nl = new_list; nl; nl = nl->next) {
+			struct config *c = (struct config *)nl->data;
+			if(NULL == old->name && NULL == c->name) {
+				matched = c;
+				break;
+			}
+			if(old->name && c->name && 0 == strcmp(old->name, c->name)) {
+				matched = c;
+				break;
+			}
+		}
+
+		if(!matched)
+			continue;
+
+		stop_live_timers(old);
+		swap_config_data(old, matched);
+		start_live_timers(old);
+	}
+
+	free_configs(new_list);
+}
+
 /* valid GFunc signature for g_slist_foreach. builds one GtkMenuItem per
  * option and appends it to the menu. separators are detected by the "--"
  * convention on both name and command fields
@@ -597,35 +662,32 @@ int main(int argc, char **argv) {
 	gtk_init(&argc, &argv);
 
 	/* parse --instance <name> before gtk consumes argv */
-	const char *instance_filter = NULL;
 	for(int i = 1; i < argc; i++) {
-		if(strcmp(argv[i], "--instance") == 0 && i + 1 < argc) {
-			instance_filter = argv[i + 1];
+		if(0 == strcmp(argv[i], "--instance") && i + 1 < argc) {
+			app_instance = argv[i + 1];
 			break;
 		}
 	}
 
-	char *cfg_path = get_config_path();
-	if(!cfg_path) {
+	app_cfg_path = get_config_path();
+	if(!app_cfg_path) {
 		fprintf(stderr, "gensystray: could not determine config file path\n");
 		exit(EXIT_FAILURE);
 	}
 
-	all_configs = load_config(cfg_path);
+	all_configs = load_config(app_cfg_path);
 	if(!all_configs) {
 		fprintf(stderr, "gensystray: could not load config file\n");
-		free(cfg_path);
+		free(app_cfg_path);
 		exit(EXIT_FAILURE);
 	}
 
-	all_configs = filter_instance(all_configs, instance_filter);
+	all_configs = filter_instance(all_configs, app_instance);
+
+	GFileMonitor *cfg_monitor = monitor_config(app_cfg_path, on_cfg_changed, NULL);
 
 	for(GSList *l = all_configs; l; l = l->next)
 		start_live_timers((struct config *)l->data);
-
-	/* monitor watches the first config's path — all instances share one file */
-	GFileMonitor *cfg_monitor = monitor_config(cfg_path, (struct config *)all_configs->data);
-	free(cfg_path);
 
 	g_slist_foreach(all_configs, (GFunc)init_tray, NULL);
 
@@ -638,6 +700,7 @@ int main(int argc, char **argv) {
 			g_object_unref(c->tray_icon);
 	}
 	free_configs(all_configs);
+	free(app_cfg_path);
 	g_object_unref(cfg_monitor);
 	ss_cleanup();
 

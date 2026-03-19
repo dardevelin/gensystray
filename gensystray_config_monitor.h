@@ -20,13 +20,20 @@
 #define _GENSYSTRAY_CFG_MONITOR_H
 
 #include <gio/gio.h>
-#include "gensystray_config_parser.h"
 
-/* sets up a GFileMonitor on config_path and wires on_cfg_changed.
- * config is updated in place when the file changes.
+/* callback type for config file change notification */
+typedef void (*config_changed_fn)(GFileMonitor *monitor, GFile *file,
+				  GFile *other_file,
+				  GFileMonitorEvent event_type,
+				  gpointer user_data);
+
+/* sets up a GFileMonitor on config_path and calls on_changed when the
+ * file changes. the caller defines the reload policy via on_changed.
  * returns the GFileMonitor — caller must g_object_unref when done.
  * returns NULL on failure.
  */
-GFileMonitor *monitor_config(const char *config_path, struct config *config);
+GFileMonitor *monitor_config(const char *config_path,
+			     config_changed_fn on_changed,
+			     gpointer user_data);
 
 #endif
