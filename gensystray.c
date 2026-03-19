@@ -486,7 +486,18 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file,
 			   gpointer user_data)
 {
 	(void)monitor; (void)file; (void)other_file;
-	(void)event_type; (void)user_data;
+	(void)user_data;
+
+	/* only reload when the file write is complete.
+	 * editors that use atomic save (write-to-tmp + rename) emit DELETED
+	 * or RENAMED mid-save, and reading the file at that point fails or
+	 * returns stale/empty content.  CHANGES_DONE_HINT fires after the
+	 * write is finished.  CREATED covers the case where the file was
+	 * removed and re-created (or replaced via rename on some monitors).
+	 */
+	if(event_type != G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT &&
+	   event_type != G_FILE_MONITOR_EVENT_CREATED)
+		return;
 
 	/* close any open menu before swapping data — menu widgets
 	 * reference section/option pointers that are about to be freed
