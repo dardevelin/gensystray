@@ -85,6 +85,13 @@
 - Process stays alive when all instances are closed (for file monitor resurrection)
 - Currently exits when last instance menu is dismissed
 
+### macOS tray icon tinting (future)
+- Auto-tint user icons to match macOS menu bar appearance (light/dark mode)
+- Detect system appearance via NSAppearance in ObjC layer at startup and on change
+- Desaturate + recolor the icon pixbuf to match system theme automatically
+- Watch for appearance change notifications and call apply_tray_update
+- Goal: any user-supplied icon works as a native-feeling menu bar icon without manual variants
+
 ### Live items (future)
 - `toggle` syntax in live blocks — flip between two states (label, icon, command) each tick or on condition
 - `populate { from = "live" }` — stdout lines as dynamic section entries
