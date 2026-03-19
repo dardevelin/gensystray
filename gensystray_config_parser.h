@@ -36,29 +36,50 @@ typedef enum {
  * we use this struct to keep this proximity relation clear
  * through out the code
  */
+typedef enum {
+	ON_EXIT,    /* matches on exact exit code */
+	ON_OUTPUT,  /* matches if stdout contains a substring */
+} on_kind;
+
+/* a single on block inside a live block.
+ * kind determines which field is used for matching.
+ * label overrides the display label when matched (NULL = raw stdout).
+ * commands: list of char** argv, each spawned once on state transition.
+ */
+struct on_block {
+	on_kind  kind;
+	int      exit_code;    /* ON_EXIT: exact exit code to match */
+	char    *output_match; /* ON_OUTPUT: substring to match in stdout */
+	char    *label;        /* display label override, NULL = raw stdout */
+	GSList  *commands;     /* list of char** argv, fired on transition */
+};
+
 /* live block — timer-driven behavior for an item.
  * update_label_argv: run on timer, stdout becomes the label (NULL = no label update).
- * command_argv: run on timer as a side effect, no label change (NULL = none).
- * exactly one of update_label_argv or command_argv should be set, or lua (future).
+ * commands: list of char** argv run on timer as side effects, no label change.
+ * on_blocks: ordered list of struct on_block, first match wins each tick.
+ * last_matched: tracks previous tick's match for transition detection.
  */
 struct live {
-	char   **update_label_argv; /* stdout → label on each tick */
-	char   **command_argv;      /* timed side-effect command */
-	char    *signal_name;       /* sanitized signal name for ss_lib */
-	guint    refresh_ms;        /* polling interval in milliseconds */
-	guint    tick_counter;      /* master tick countdown, reset when fired */
-	bool     independent;       /* true = own timer, excluded from master tick */
-	char    *live_output;       /* last label output */
-	guint    timer_id;          /* GLib timer source ID, 0 = not running */
-	void            *live_label; /* GtkWidget *, set while menu is open */
-	ss_connection_t  live_conn;  /* ss_lib connection handle, 0 = not connected */
+	char   **update_label_argv;    /* stdout → label on each tick */
+	GSList  *commands;             /* list of char** argv, timed side effects */
+	GSList  *on_blocks;            /* struct on_block list, declaration order */
+	struct on_block *last_matched; /* previous tick match, NULL = none */
+	char    *signal_name;          /* sanitized signal name for ss_lib */
+	guint    refresh_ms;           /* polling interval in milliseconds */
+	guint    tick_counter;         /* master tick countdown, reset when fired */
+	bool     independent;          /* true = own timer, excluded from master tick */
+	char    *live_output;          /* last label output */
+	guint    timer_id;             /* GLib timer source ID, 0 = not running */
+	void            *live_label;   /* GtkWidget *, set while menu is open */
+	ss_connection_t  live_conn;    /* ss_lib connection handle, 0 = not connected */
 };
 
 struct option {
 	char       *name;
-	char      **command_argv;  /* click action argv, NULL if none */
-	int         order;         /* -1 = unordered (declaration order) */
-	struct live *live;         /* NULL for static items */
+	GSList     *commands;  /* list of char** argv, click actions, NULL if none */
+	int         order;     /* -1 = unordered (declaration order) */
+	struct live *live;     /* NULL for static items */
 };
 
 /* context passed to GFileMonitor callbacks for glob populate sources.

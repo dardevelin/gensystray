@@ -67,15 +67,21 @@ static void check_all_exited(void) {
 	gtk_main_quit();
 }
 
-/* valid "activate" signal callback. spawns the associated argv in a child
- * process, keeping the ui responsive. user_data is char ** argv, already
- * normalized by the parser (array = direct exec, string = ["sh","-c",cmd]).
+/* spawn all commands in a GSList of char** argv entries */
+static void spawn_commands(GSList *commands) {
+	for(GSList *l = commands; l; l = l->next) {
+		char **argv = (char **)l->data;
+		if(argv && argv[0])
+			g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
+				      NULL, NULL, NULL, NULL);
+	}
+}
+
+/* valid "activate" signal callback. spawns all commands in the list.
+ * user_data is GSList* of char** argv entries.
  */
 void delegate_system_call(GtkWidget *widget, gpointer user_data) {
-	char **argv = (char **)user_data;
-	if(!argv || !argv[0])
-		return;
-	g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL);
+	spawn_commands((GSList *)user_data);
 }
 
 /* ss_lib slot — called when a live signal is emitted.
@@ -99,11 +105,9 @@ static gboolean live_tick(gpointer user_data) {
 	char *err    = NULL;
 	int   status = 0;
 
-	/* run timed command if set (side effect, no label update) */
-	if(opt->live->command_argv) {
-		g_spawn_async(NULL, opt->live->command_argv, NULL,
-			      G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL);
-	}
+	/* run timed commands if set (side effects, no label update) */
+	if(opt->live->commands)
+		spawn_commands(opt->live->commands);
 
 	if(!opt->live->update_label_argv)
 		return TRUE;
@@ -128,8 +132,42 @@ static gboolean live_tick(gpointer user_data) {
 			*nl = '\0';
 	}
 
+	/* trim trailing newline before matching */
+	char *trimmed = out ? out : "";
+	char *nl = strchr(trimmed, '\n');
+	if(nl)
+		*nl = '\0';
+
+	/* match on blocks — first match wins */
+	struct on_block *matched = NULL;
+	for(GSList *ol = opt->live->on_blocks; ol; ol = ol->next) {
+		struct on_block *ob = (struct on_block *)ol->data;
+
+		if(ON_EXIT == ob->kind && status == ob->exit_code) {
+			matched = ob;
+			break;
+		}
+
+		if(ON_OUTPUT == ob->kind && strstr(trimmed, ob->output_match)) {
+			matched = ob;
+			break;
+		}
+	}
+
+	/* fire on block command only on state transition */
+	if(matched != opt->live->last_matched) {
+		opt->live->last_matched = matched;
+		if(matched && matched->commands)
+			spawn_commands(matched->commands);
+	}
+
+	/* determine display label */
+	const char *display = matched && matched->label
+	                    ? matched->label
+	                    : trimmed;
+
 	free(opt->live->live_output);
-	opt->live->live_output = strdup(out ? out : "");
+	opt->live->live_output = strdup(display);
 
 	/* emit — slots (label widgets) receive the update if connected */
 	ss_emit_string(opt->live->signal_name, opt->live->live_output);
@@ -231,7 +269,7 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 	struct option *option = (struct option*)data;
 	GtkWidget *menu_item = NULL;
 
-	if('-' == option->name[0] && NULL == option->command_argv) {
+	if('-' == option->name[0] && NULL == option->commands) {
 		menu_item = gtk_separator_menu_item_new();
 	} else if(option->live) {
 		/* live item — label widget connected as ss_lib slot while menu is open */
@@ -243,10 +281,10 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 		option->live->live_label = label;
 		ss_connect_ex(option->live->signal_name, on_live_signal, label,
 			      SS_PRIORITY_NORMAL, &option->live->live_conn);
-		if(option->command_argv)
+		if(option->commands)
 			g_signal_connect(G_OBJECT(menu_item), "activate",
 					 G_CALLBACK(delegate_system_call),
-					 option->command_argv);
+					 option->commands);
 		g_signal_connect_swapped(G_OBJECT(menu_item), "destroy",
 					 G_CALLBACK(g_nullify_pointer),
 					 &option->live->live_label);
@@ -254,7 +292,7 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 		menu_item = gtk_menu_item_new_with_label(option->name);
 		g_signal_connect(G_OBJECT(menu_item), "activate",
 				 G_CALLBACK(delegate_system_call),
-				 option->command_argv);
+				 option->commands);
 	}
 
 	gtk_menu_shell_append((GtkMenuShell*)menu, menu_item);

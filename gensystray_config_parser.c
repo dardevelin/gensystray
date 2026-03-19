@@ -199,6 +199,52 @@ static char **parse_argv(const ucl_object_t *obj)
 	return argv;
 }
 
+/* free a GSList of char** argv entries */
+static void command_list_free(GSList *list) {
+	for(GSList *l = list; l; l = l->next)
+		g_strfreev((char **)l->data);
+	g_slist_free(list);
+}
+
+/* parse a UCL command value into a GSList of char** argv.
+ * flat array ["cmd", "arg"]      → one argv entry.
+ * array of arrays [["a","b"],…]  → one argv entry per sub-array.
+ * string/heredoc                 → one argv entry via shell.
+ * returns NULL if obj is NULL.
+ */
+static GSList *parse_command_list(const ucl_object_t *obj)
+{
+	if(!obj)
+		return NULL;
+
+	if(UCL_ARRAY == ucl_object_type(obj)) {
+		/* peek at first element to detect array-of-arrays */
+		ucl_object_iter_t peek = NULL;
+		const ucl_object_t *first = ucl_iterate_object(obj, &peek, false);
+
+		if(first && UCL_ARRAY == ucl_object_type(first)) {
+			/* array of arrays — each sub-array is one argv */
+			GSList *list = NULL;
+			ucl_object_iter_t it = NULL;
+			const ucl_object_t *sub;
+			for(; NULL != (sub = ucl_iterate_object(obj, &it, false)); ) {
+				char **argv = parse_argv(sub);
+				if(argv)
+					list = g_slist_append(list, argv);
+			}
+			return list;
+		}
+
+		/* flat array — single argv */
+		char **argv = parse_argv(obj);
+		return argv ? g_slist_append(NULL, argv) : NULL;
+	}
+
+	/* string or heredoc — single argv via shell */
+	char **argv = parse_argv(obj);
+	return argv ? g_slist_append(NULL, argv) : NULL;
+}
+
 static int option_order_cmp(gconstpointer a, gconstpointer b) {
 	return ((const struct option *)a)->order - ((const struct option *)b)->order;
 }
@@ -211,13 +257,22 @@ static int option_alpha_cmp(gconstpointer a, gconstpointer b) {
 	return strcmp(((const struct option *)a)->name, ((const struct option *)b)->name);
 }
 
+static void on_block_dalloc(void *data) {
+	struct on_block *ob = (struct on_block *)data;
+	free(ob->output_match);
+	free(ob->label);
+	command_list_free(ob->commands);
+	free(ob);
+}
+
 static void live_dalloc(struct live *lv) {
 	if(!lv)
 		return;
 	if(0 != lv->timer_id)
 		g_source_remove(lv->timer_id);
 	g_strfreev(lv->update_label_argv);
-	g_strfreev(lv->command_argv);
+	command_list_free(lv->commands);
+	g_slist_free_full(lv->on_blocks, on_block_dalloc);
 	free(lv->signal_name);
 	free(lv->live_output);
 	free(lv);
@@ -226,7 +281,7 @@ static void live_dalloc(struct live *lv) {
 static void option_dalloc(void *data) {
 	struct option *opt = (struct option *)data;
 	free(opt->name);
-	g_strfreev(opt->command_argv);
+	command_list_free(opt->commands);
 	live_dalloc(opt->live);
 	free(opt);
 }
@@ -283,14 +338,14 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 				if(sep && ucl_object_toboolean(sep)) {
 					free(opt->name);
 					opt->name         = strdup("--");
-					opt->command_argv = NULL;
+					opt->commands = NULL;
 					opt->order        = -1;
 					unordered = g_slist_prepend(unordered, opt);
 					continue;
 				}
 
 				const ucl_object_t *cmd = ucl_object_lookup(item, "command");
-				opt->command_argv = parse_argv(cmd);
+				opt->commands = parse_command_list(cmd);
 				opt->live         = NULL;
 
 				const ucl_object_t *live_blk = ucl_object_lookup(item, "live");
@@ -300,7 +355,7 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 						fprintf(stderr, "[!] item '%s': live requires refresh\n", opt->name);
 						free(opt->name);
 						opt->name         = strdup("[!] missing refresh");
-						opt->command_argv = NULL;
+						opt->commands = NULL;
 						opt->order        = -1;
 						unordered = g_slist_prepend(unordered, opt);
 						continue;
@@ -315,13 +370,15 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 					const ucl_object_t *ul = ucl_object_lookup(live_blk, "update_label");
 					const ucl_object_t *lc = ucl_object_lookup(live_blk, "command");
 					lv->update_label_argv = parse_argv(ul);
-					lv->command_argv      = parse_argv(lc);
+					lv->commands          = parse_command_list(lc);
 					lv->refresh_ms        = parse_duration_ms(ucl_object_tostring(ref));
 					lv->tick_counter      = 0;
 					lv->live_output       = NULL;
 					lv->timer_id          = 0;
 					lv->live_label        = NULL;
 					lv->live_conn         = 0;
+					lv->last_matched      = NULL;
+					lv->on_blocks         = NULL;
 
 					const ucl_object_t *ind = ucl_object_lookup(live_blk, "independent");
 					lv->independent = ind && ucl_object_toboolean(ind);
@@ -330,6 +387,52 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 					lv->signal_name = sn
 					                ? sanitize_signal_name(ucl_object_tostring(sn))
 					                : sanitize_signal_name(opt->name);
+
+					/* parse on blocks — "on exit N" and "on output str" */
+					ucl_object_iter_t on_it = ucl_object_iterate_new(live_blk);
+					const ucl_object_t *on_cur;
+					for(; NULL != (on_cur = ucl_object_iterate_safe(on_it, true)); ) {
+						const char *on_key = ucl_object_key(on_cur);
+						if(!on_key || 0 != strcmp(on_key, "on"))
+							continue;
+
+						ucl_object_iter_t kind_it = NULL;
+						const ucl_object_t *kind_obj;
+						for(; NULL != (kind_obj = ucl_iterate_object(on_cur, &kind_it, false)); ) {
+							const char *kind_key = ucl_object_key(kind_obj);
+							if(!kind_key)
+								continue;
+
+							ucl_object_iter_t val_it = NULL;
+							const ucl_object_t *val_obj;
+							for(; NULL != (val_obj = ucl_iterate_object(kind_obj, &val_it, true)); ) {
+								struct on_block *ob = malloc(sizeof(struct on_block));
+								if(!ob)
+									continue;
+
+								if(0 == strcmp(kind_key, "exit")) {
+									ob->kind      = ON_EXIT;
+									ob->exit_code = atoi(ucl_object_key(val_obj));
+									ob->output_match = NULL;
+								} else if(0 == strcmp(kind_key, "output")) {
+									ob->kind         = ON_OUTPUT;
+									ob->exit_code    = 0;
+									ob->output_match = strdup(ucl_object_key(val_obj));
+								} else {
+									free(ob);
+									continue;
+								}
+
+								const ucl_object_t *lbl  = ucl_object_lookup(val_obj, "label");
+								const ucl_object_t *ocmd = ucl_object_lookup(val_obj, "command");
+								ob->label        = lbl  ? strdup(ucl_object_tostring(lbl)) : NULL;
+								ob->commands = parse_command_list(ocmd);
+
+								lv->on_blocks = g_slist_append(lv->on_blocks, ob);
+							}
+						}
+					}
+					ucl_object_iterate_free(on_it);
 
 					opt->live = lv;
 				}
@@ -398,7 +501,7 @@ static void expand_dir(const char *dir_path, const char *pat,
 			snprintf(buf, sizeof(buf), "[!] watch error: %s",
 				 err ? err->message : dir_path);
 			e->name         = strdup(buf);
-			e->command_argv = NULL;
+			e->commands = NULL;
 			e->live         = NULL;
 			e->order        = -1;
 			*opts = g_slist_prepend(*opts, e);
@@ -433,16 +536,14 @@ static void expand_dir(const char *dir_path, const char *pat,
 		struct option *opt = malloc(sizeof(struct option));
 		if(opt) {
 			opt->name         = strdup(label);
-			opt->command_argv = parse_argv(NULL); /* built from template string below */
-			/* wrap the substituted command string as sh -c argv */
+			opt->commands = NULL;
 			if(cmd && '\0' != cmd[0]) {
-				g_strfreev(opt->command_argv);
 				char **av = g_new(char *, 4);
 				av[0] = g_strdup("sh");
 				av[1] = g_strdup("-c");
 				av[2] = g_strdup(cmd);
 				av[3] = NULL;
-				opt->command_argv = av;
+				opt->commands = g_slist_append(NULL, av);
 			}
 			opt->live  = NULL;
 			opt->order = -1;
