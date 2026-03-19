@@ -315,6 +315,12 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 
 	if('-' == option->name[0] && NULL == option->commands) {
 		menu_item = gtk_separator_menu_item_new();
+	} else if(option->subopts) {
+		/* hierarchy submenu — subdirectory rendered as a nested menu */
+		menu_item = gtk_menu_item_new_with_label(option->name);
+		GtkWidget *submenu = gtk_menu_new();
+		g_slist_foreach(option->subopts, gensystray_option_to_item, submenu);
+		gtk_menu_item_set_submenu(GTK_MENU_ITEM(menu_item), submenu);
 	} else if(option->live) {
 		/* live item — label widget connected as ss_lib slot while menu is open */
 		const char *text = option->live->live_output ? option->live->live_output : option->name;

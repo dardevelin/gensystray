@@ -80,6 +80,7 @@ struct option {
 	GSList     *commands;  /* list of char** argv, click actions, NULL if none */
 	int         order;     /* -1 = unordered (declaration order) */
 	struct live *live;     /* NULL for static items */
+	GSList     *subopts;   /* child options for hierarchy submenus, NULL if leaf */
 };
 
 /* context passed to GFileMonitor callbacks for glob populate sources.

@@ -283,6 +283,7 @@ static void option_dalloc(void *data) {
 	free(opt->name);
 	command_list_free(opt->commands);
 	live_dalloc(opt->live);
+	g_slist_free_full(opt->subopts, option_dalloc);
 	free(opt);
 }
 
@@ -588,6 +589,7 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 					opt->name     = strdup("--");
 					opt->commands = NULL;
 					opt->live     = NULL;
+					opt->subopts  = NULL;
 					opt->order    = -1;
 					unordered = g_slist_prepend(unordered, opt);
 					continue;
@@ -596,6 +598,7 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 				const ucl_object_t *cmd = ucl_object_lookup(item, "command");
 				opt->commands = parse_command_list(cmd);
 				opt->live         = NULL;
+				opt->subopts      = NULL;
 
 				const ucl_object_t *live_blk = ucl_object_lookup(item, "live");
 				if(live_blk) {
@@ -672,22 +675,48 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 }
 
 /* substitute {filename} and {filepath} tokens in tpl, returns a g_malloc'd string */
-static char *apply_tpl(const char *tpl, const char *filename, const char *filepath)
+/* shell-escape a string with single quotes for safe use in sh -c.
+ * embedded single quotes are replaced with '\'' (end quote, escaped
+ * literal quote, reopen quote).  caller must g_free the result.
+ */
+static char *shell_quote(const char *s)
+{
+	GString *out = g_string_new("'");
+	for(; '\0' != *s; s++) {
+		if('\'' == *s)
+			g_string_append(out, "'\\''");
+		else
+			g_string_append_c(out, *s);
+	}
+	g_string_append_c(out, '\'');
+	return g_string_free(out, FALSE);
+}
+
+/* apply template substitutions.  if for_shell is true, {filename} and
+ * {filepath} values are single-quoted for safe use inside sh -c so
+ * spaces and special characters in paths do not cause splitting.
+ */
+static char *apply_tpl(const char *tpl, const char *filename,
+		       const char *filepath, bool for_shell)
 {
 	char *result = g_strdup(tpl);
 
 	if(strstr(result, "{filename}")) {
+		char *val = for_shell ? shell_quote(filename) : g_strdup(filename);
 		char **parts = g_strsplit(result, "{filename}", -1);
 		g_free(result);
-		result = g_strjoinv(filename, parts);
+		result = g_strjoinv(val, parts);
 		g_strfreev(parts);
+		g_free(val);
 	}
 
 	if(strstr(result, "{filepath}")) {
+		char *val = for_shell ? shell_quote(filepath) : g_strdup(filepath);
 		char **parts = g_strsplit(result, "{filepath}", -1);
 		g_free(result);
-		result = g_strjoinv(filepath, parts);
+		result = g_strjoinv(val, parts);
 		g_strfreev(parts);
+		g_free(val);
 	}
 
 	return result;
@@ -713,6 +742,7 @@ static void expand_dir(const char *dir_path, const char *pat,
 			e->name         = strdup(buf);
 			e->commands = NULL;
 			e->live         = NULL;
+			e->subopts      = NULL;
 			e->order        = -1;
 			*opts = g_slist_prepend(*opts, e);
 		}
@@ -726,11 +756,32 @@ static void expand_dir(const char *dir_path, const char *pat,
 		bool  is_dir   = g_file_test(filepath, G_FILE_TEST_IS_DIR);
 
 		if(is_dir) {
-			bool can_recurse = depth_left != 0;
-			if(can_recurse)
-				expand_dir(filepath, pat, pop,
-					   depth_left > 0 ? depth_left - 1 : -1,
-					   opts);
+			bool can_recurse = 0 != depth_left;
+			if(can_recurse) {
+				if(pop->hierarchy) {
+					/* hierarchy mode — subdirectory becomes a submenu */
+					GSList *sub = NULL;
+					expand_dir(filepath, pat, pop,
+						   0 < depth_left ? depth_left - 1 : -1,
+						   &sub);
+					if(sub) {
+						struct option *dir_opt = malloc(sizeof(struct option));
+						if(dir_opt) {
+							dir_opt->name     = strdup(fname);
+							dir_opt->commands = NULL;
+							dir_opt->live     = NULL;
+							dir_opt->subopts  = sub;
+							dir_opt->order    = -1;
+							*opts = g_slist_prepend(*opts, dir_opt);
+						}
+					}
+				} else {
+					/* flat mode — recurse into same list */
+					expand_dir(filepath, pat, pop,
+						   0 < depth_left ? depth_left - 1 : -1,
+						   opts);
+				}
+			}
 			g_free(filepath);
 			continue;
 		}
@@ -740,8 +791,8 @@ static void expand_dir(const char *dir_path, const char *pat,
 			continue;
 		}
 
-		char *label = apply_tpl(pop->label_tpl, fname, filepath);
-		char *cmd   = apply_tpl(pop->command_tpl, fname, filepath);
+		char *label = apply_tpl(pop->label_tpl, fname, filepath, false);
+		char *cmd   = apply_tpl(pop->command_tpl, fname, filepath, true);
 
 		struct option *opt = malloc(sizeof(struct option));
 		if(opt) {
@@ -755,8 +806,9 @@ static void expand_dir(const char *dir_path, const char *pat,
 				av[3] = NULL;
 				opt->commands = g_slist_append(NULL, av);
 			}
-			opt->live  = NULL;
-			opt->order = -1;
+			opt->live    = NULL;
+			opt->subopts = NULL;
+			opt->order   = -1;
 			*opts = g_slist_prepend(*opts, opt);
 		}
 
