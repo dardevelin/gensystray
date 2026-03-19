@@ -502,9 +502,22 @@ static GtkStatusIcon *init_tray(struct config *config) {
 	GtkStatusIcon *icon = NULL;
 
 	if(!config->icon_path) {
-		icon = gtk_status_icon_new_from_stock(GTK_STOCK_INFO);
+		/* no icon specified — fall back to a generic theme icon */
+		icon = gtk_status_icon_new_from_icon_name("application-x-executable");
+	} else if('/' == config->icon_path[0] || '.' == config->icon_path[0]
+	          || '~' == config->icon_path[0]) {
+		/* absolute, relative, or ~ path → load as file */
+		char *path = config->icon_path;
+		char *expanded = NULL;
+		if('~' == path[0]) {
+			expanded = g_strconcat(g_get_home_dir(), path + 1, NULL);
+			path = expanded;
+		}
+		icon = gtk_status_icon_new_from_file(path);
+		g_free(expanded);
 	} else {
-		icon = gtk_status_icon_new_from_file(config->icon_path);
+		/* no path separator → treat as XDG theme icon name */
+		icon = gtk_status_icon_new_from_icon_name(config->icon_path);
 	}
 
 	if(config->tooltip)
