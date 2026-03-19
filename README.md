@@ -1,28 +1,60 @@
-# GenSysTray 2.2.0
+<div align="center">
+  <img src="assets/icons/icon_128.png" width="96" alt="GenSysTray" />
+  <h1>GenSysTray</h1>
+  <p>Your scripts, one click away. Configurable system tray utility for macOS and Linux.</p>
 
-A configurable system tray utility written in C. Click a tray icon to get a menu of commands.
+  <a href="https://github.com/dardevelin/gensystray/releases/latest"><img src="https://img.shields.io/github/v/release/dardevelin/gensystray?color=%231D9E75&label=latest" alt="Latest release"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue.svg" alt="License"/></a>
+  <a href="https://github.com/dardevelin/gensystray/releases/latest"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey" alt="Platform"/></a>
+</div>
 
-## LICENSE
+---
 
-GPLv3, no later option. See LICENSE or http://www.gnu.org/licenses/gpl-3.0.txt
+GenSysTray sits quietly in the menu bar or system tray. Click the icon to get a menu of commands, scripts, and live status items — everything defined in a plain text config file. No GUI. No daemon. Just your tools, close at hand.
 
-## Building
+The config hot-reloads on save. Live items update on a timer. The tray icon itself can change based on what your scripts report. It stays out of the way until you need it.
+
+## Install
+
+### macOS — Homebrew
+
+```sh
+brew tap dardevelin/tap
+brew install --cask gensystray
+```
+
+Or standalone:
+
+```sh
+brew tap dardevelin/gensystray
+brew install --cask gensystray
+```
+
+### macOS — Direct download
+
+Download the latest `GenSysTray-<version>-macos.zip` from [Releases](https://github.com/dardevelin/gensystray/releases), unzip, and move `GenSysTray.app` to `/Applications`.
+
+The app is signed and notarized — Gatekeeper will not block it.
+
+### Linux — Build from source
+
+```sh
+git clone https://github.com/dardevelin/gensystray
+cd gensystray
+make init
+make
+./gensystray
+```
 
 Dependencies: `gtk+3`, `gcc`, `make`, `pkg-config`
 
-```sh
-make init   # fetch submodules (libucl, ss_lib)
-make        # build
-make run    # build and run
-```
-
 ## Configuration
 
-Config file location: `~/.config/gensystray/gensystray.cfg`
+Config file: `~/.config/gensystray/gensystray.cfg`
 
-Override with: `GENSYSTRAY_PATH=/path/to/file gensystray`
+Override: `GENSYSTRAY_PATH=/path/to/config.cfg`
 
-### Single instance
+### Minimal example
 
 ```hcl
 tray {
@@ -30,69 +62,40 @@ tray {
   tooltip = "My Tray"
 }
 
-item "Terminal" {
-  command = "xterm"
-}
+item "Terminal" { command = "xterm" }
+item "Browser"  { command = "firefox" }
 
-item "Browser" {
-  command = "firefox"
-}
+item "separator" { separator = true }
 
-item "separator" {
-  separator = true
-}
-
-item "Editor" {
-  command = "nvim"
-}
+item "Editor" { command = "nvim" }
 ```
 
 ### Multiple instances
 
-One config file can declare multiple tray icons via `instance` blocks.
-No top-level items or tray block are allowed when using instances.
-Start a specific instance with `--instance <name>`.
+One config file, multiple tray icons. Start each with `--instance <name>`.
 
 ```hcl
 instance "work" {
-  tray {
-    icon    = "/path/to/work.png"
-    tooltip = "Work"
-  }
-
-  item "Terminal" {
-    command = "xterm"
-  }
+  tray { icon = "/path/to/work.png" tooltip = "Work" }
+  item "Terminal" { command = "xterm" }
 }
 
 instance "personal" {
-  tray {
-    icon    = "/path/to/personal.png"
-    tooltip = "Personal"
-  }
-
-  item "Music" {
-    command = "spotify"
-  }
+  tray { icon = "/path/to/personal.png" tooltip = "Personal" }
+  item "Music" { command = "spotify" }
 }
 ```
 
 ### Commands
 
-Four forms are supported:
-
 ```hcl
-# string — runs via $SHELL -c, falls back to sh
-item "Date" {
-  command = "date >> /tmp/log.txt"
-}
+# string — runs via $SHELL -c
+item "Date" { command = "date >> /tmp/log.txt" }
 
-# array — direct exec, no shell, arguments are safe from splitting
-item "Editor" {
-  command = ["nvim", "--listen", "/tmp/nvim.sock"]
-}
+# array — direct exec, no shell
+item "Editor" { command = ["nvim", "--listen", "/tmp/nvim.sock"] }
 
-# multiple commands — array of arrays, all run on click
+# multiple commands — all run on click
 item "Deploy" {
   command = [
     ["make", "build"],
@@ -100,7 +103,7 @@ item "Deploy" {
   ]
 }
 
-# heredoc with shebang — explicit interpreter per item
+# heredoc with shebang — explicit interpreter
 item "Script" {
   command = <<EOD
 #!/usr/bin/env python3
@@ -111,69 +114,28 @@ EOD
 }
 ```
 
-### Item ordering
-
-Items with `order` come first, sorted by value. Items without `order` follow
-in declaration order. Separators obey the same rules.
-
-```hcl
-item "First" {
-  command = "echo first"
-  order   = 1
-}
-
-item "Second" {
-  command = "echo second"
-  order   = 2
-}
-
-item "Appended" {
-  command = "echo appended"
-}
-```
-
 ### Live items
 
-Live items run on a timer via a `live` block. `refresh` is required.
-Supported units: `ms`, `s`, `m`, `h`.
-
-`update_label` runs a command on each tick and displays the stdout as the
-item label. `command` inside `live` runs on the timer as a side effect
-with no label change. Both are optional and independent.
-
-The click action (`command` at item level) is separate from timer behavior.
+Items that update on a timer. `refresh` is required (`ms`, `s`, `m`, `h`).
 
 ```hcl
-# label updates every second, clicking opens Calendar
 item "Clock" {
   command = ["open", "-a", "Calendar"]
-
   live {
     refresh      = "1s"
     update_label = "date '+%H:%M:%S'"
   }
 }
 
-# label updates every 5 seconds, no click action
 item "Uptime" {
   live {
     refresh      = "5s"
     update_label = "uptime | awk '{print $3}'"
   }
 }
-
-# runs a sync every 5 minutes, label stays static
-item "Sync" {
-  live {
-    refresh = "5m"
-    command = ["rsync", "-av", "~/docs/", "backup:/docs/"]
-  }
-}
 ```
 
-By default all live items share a single master timer running at the GCD
-of their refresh intervals. Add `independent = true` to give an item its
-own timer:
+All live items share a single timer at the GCD of their refresh intervals. Use `independent = true` for a dedicated timer:
 
 ```hcl
 item "Sensor" {
@@ -187,9 +149,7 @@ item "Sensor" {
 
 ### Reactive on blocks
 
-Inside a `live` block, `on exit` and `on output` react to the
-`update_label` command result. First match wins. Commands inside an `on`
-block fire only on state transition (not every tick).
+React to exit codes or output — commands fire only on state transition.
 
 ```hcl
 item "Service" {
@@ -197,34 +157,19 @@ item "Service" {
     refresh      = "5s"
     update_label = ["sh", "-c", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/health"]
 
-    on exit 0 {
-      label   = "UP"
-      command = ["notify-send", "Service recovered"]
-    }
-
-    on exit 1 { label = "DOWN" }
-
-    on output "200" { label = "Healthy" }
-    on output "503" { label = "Degraded" }
+    on exit 0        { label = "UP"       command = ["notify-send", "Service recovered"] }
+    on exit 1        { label = "DOWN" }
+    on output "200"  { label = "Healthy" }
+    on output "503"  { label = "Degraded" }
   }
 }
 ```
 
-- `on exit N` matches the exit code of `update_label`
-- `on output "str"` matches when stdout contains `str` (substring match)
-- `label` overrides the displayed text for that state
-- `command` (optional) runs once when entering that state, supports all
-  command forms including multiple commands
-
 ### Live tray icon
 
-`update_tray_icon` runs a command on each tick. Its stdout becomes the new
-tray icon path, overriding the parsed default until the next config reload.
-An empty or failed stdout leaves the icon unchanged. The icon resets to the
-config default on reload.
+The tray icon itself can change based on script output. Resets to config default on reload.
 
 ```hcl
-# cycle through icons based on a runtime condition
 item "Status" {
   live {
     refresh          = "5s"
@@ -234,54 +179,42 @@ item "Status" {
 }
 ```
 
-The icon path rules are the same as the `tray { icon = ... }` field:
-`./file.png`, `/abs/path.png`, `~/path.png` load as files; bare names like
-`"battery-low"` are XDG theme icon names.
+Icon path rules: `./file.png`, `/abs/path.png`, `~/path.png` load as files; bare names like `"battery-low"` are XDG theme icon names.
 
 ### Sections
-
-Sections group items into submenus (collapsed) or inline groups (expanded).
 
 ```hcl
 # collapsed — renders as a submenu
 section "Tools" {
-  item "Htop" {
-    command = ["xterm", "-e", "htop"]
-  }
-  item "Logs" {
-    command = ["xterm", "-e", "tail -f /var/log/syslog"]
-  }
+  item "Htop" { command = ["xterm", "-e", "htop"] }
+  item "Logs" { command = ["xterm", "-e", "tail -f /var/log/syslog"] }
 }
 
-# expanded — renders inline with separators
+# expanded — renders inline
 section "Status" {
   expanded   = true
-  separators = true   # "top", "bottom", "none", or true (both)
+  separators = true
   show_label = true
 
   item "Clock" {
-    live {
-      refresh      = "1s"
-      update_label = "date '+%H:%M:%S'"
-    }
+    live { refresh = "1s" update_label = "date '+%H:%M:%S'" }
   }
 }
 ```
 
 ### Dynamic sections (glob populate)
 
-Sections can be populated dynamically from the filesystem:
+Populate a section from the filesystem, with live watching.
 
 ```hcl
 section "Notes" {
   expanded = true
 
   populate {
-    from    = "glob"
-    pattern = "~/notes/*.md"
-    watch   = true        # re-expands when files are added or removed
-    depth   = 0           # 0 = current dir only, N = N levels, -1 = unlimited
-    hierarchy = false     # true = subdirs become submenus
+    from      = "glob"
+    pattern   = "~/notes/*.md"
+    watch     = true
+    hierarchy = false
 
     item {
       label   = "{filename}"
@@ -291,41 +224,31 @@ section "Notes" {
 }
 ```
 
-Multiple populate blocks per section are supported — each with its own
-pattern and item template:
+### Item ordering
+
+Items with `order` come first, sorted by value. Items without follow in declaration order.
 
 ```hcl
-section "Documents" {
-  expanded = true
-
-  populate {
-    from    = "glob"
-    pattern = "~/docs/*.md"
-    watch   = true
-    item {
-      label   = "{filename}"
-      command = ["nvim", "{filepath}"]
-    }
-  }
-
-  populate {
-    from    = "glob"
-    pattern = "~/docs/*.pdf"
-    watch   = true
-    item {
-      label   = "{filename}"
-      command = ["zathura", "{filepath}"]
-    }
-  }
-}
+item "First"    { command = "echo first"    order = 1 }
+item "Second"   { command = "echo second"   order = 2 }
+item "Appended" { command = "echo appended" }
 ```
+
+## Building from source (macOS)
+
+```sh
+make app      # builds GenSysTray.app (release, no dock icon)
+make sign SIGN_ID="Developer ID Application: Name (TEAMID)"
+make notarize APPLE_ID=you@example.com APPLE_TEAM=TEAMID APPLE_PASS=xxxx-xxxx-xxxx-xxxx
+```
+
+## License
+
+GPLv3, no later option. See [LICENSE](LICENSE) or https://www.gnu.org/licenses/gpl-3.0.txt
+
+**Why no later option?** I can't agree to a license that doesn't exist yet.
 
 ## FAQ
 
-**Why no later option on the license?**
-I can't agree with a license that doesn't exist yet. Conceding such rights
-would be irresponsible.
-
 **Why a Generic System Tray Icon?**
-Sometimes you run scripts so often that a single click is better than
-opening a terminal every time.
+Sometimes you run scripts so often that a single click is better than opening a terminal every time.
