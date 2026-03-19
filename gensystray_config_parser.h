@@ -36,22 +36,29 @@ typedef enum {
  * we use this struct to keep this proximity relation clear
  * through out the code
  */
-struct option {
-	char  *name;
-	char **command_argv;  /* click action argv, NULL if none. array = direct exec,
-	                       * string/heredoc normalized to ["sh", "-c", cmd, NULL] */
-	int    order;         /* -1 = unordered (declaration order) */
+/* live block — timer-driven behavior for an item.
+ * update_label_argv: run on timer, stdout becomes the label (NULL = no label update).
+ * command_argv: run on timer as a side effect, no label change (NULL = none).
+ * exactly one of update_label_argv or command_argv should be set, or lua (future).
+ */
+struct live {
+	char   **update_label_argv; /* stdout → label on each tick */
+	char   **command_argv;      /* timed side-effect command */
+	char    *signal_name;       /* sanitized signal name for ss_lib */
+	guint    refresh_ms;        /* polling interval in milliseconds */
+	guint    tick_counter;      /* master tick countdown, reset when fired */
+	bool     independent;       /* true = own timer, excluded from master tick */
+	char    *live_output;       /* last label output */
+	guint    timer_id;          /* GLib timer source ID, 0 = not running */
+	void            *live_label; /* GtkWidget *, set while menu is open */
+	ss_connection_t  live_conn;  /* ss_lib connection handle, 0 = not connected */
+};
 
-	/* live item fields — NULL/0 for static items */
-	char   **live_argv;     /* timer command argv, NULL = static. same normalization */
-	char    *signal_name;   /* sanitized signal name, derived from name or explicit */
-	guint    refresh_ms;    /* polling interval in milliseconds */
-	guint    tick_counter;  /* master tick countdown, reset when it fires */
-	bool     independent;   /* true = own timer, excluded from master tick */
-	char    *live_output;   /* last output from live_cmd */
-	guint    timer_id;      /* GLib timer source ID, 0 = not running */
-	void             *live_label;   /* GtkWidget *, set while menu is open */
-	ss_connection_t   live_conn;    /* ss_lib connection handle, 0 = not connected */
+struct option {
+	char       *name;
+	char      **command_argv;  /* click action argv, NULL if none */
+	int         order;         /* -1 = unordered (declaration order) */
+	struct live *live;         /* NULL for static items */
 };
 
 /* context passed to GFileMonitor callbacks for glob populate sources.

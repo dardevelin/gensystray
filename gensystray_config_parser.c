@@ -211,15 +211,23 @@ static int option_alpha_cmp(gconstpointer a, gconstpointer b) {
 	return strcmp(((const struct option *)a)->name, ((const struct option *)b)->name);
 }
 
+static void live_dalloc(struct live *lv) {
+	if(!lv)
+		return;
+	if(0 != lv->timer_id)
+		g_source_remove(lv->timer_id);
+	g_strfreev(lv->update_label_argv);
+	g_strfreev(lv->command_argv);
+	free(lv->signal_name);
+	free(lv->live_output);
+	free(lv);
+}
+
 static void option_dalloc(void *data) {
 	struct option *opt = (struct option *)data;
-	if(0 != opt->timer_id)
-		g_source_remove(opt->timer_id);
 	free(opt->name);
 	g_strfreev(opt->command_argv);
-	g_strfreev(opt->live_argv);
-	free(opt->signal_name);
-	free(opt->live_output);
+	live_dalloc(opt->live);
 	free(opt);
 }
 
@@ -281,23 +289,13 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 					continue;
 				}
 
-				/* live item fields */
-				opt->live_argv   = NULL;
-				opt->signal_name = NULL;
-				opt->refresh_ms  = 0;
-				opt->tick_counter = 0;
-				opt->independent = false;
-				opt->live_output = NULL;
-				opt->timer_id    = 0;
-				opt->live_label  = NULL;
-				opt->live_conn   = 0;
-
 				const ucl_object_t *cmd = ucl_object_lookup(item, "command");
 				opt->command_argv = parse_argv(cmd);
+				opt->live         = NULL;
 
-				const ucl_object_t *live = ucl_object_lookup(item, "live");
-				if(live) {
-					const ucl_object_t *ref = ucl_object_lookup(item, "refresh");
+				const ucl_object_t *live_blk = ucl_object_lookup(item, "live");
+				if(live_blk) {
+					const ucl_object_t *ref = ucl_object_lookup(live_blk, "refresh");
 					if(!ref) {
 						fprintf(stderr, "[!] item '%s': live requires refresh\n", opt->name);
 						free(opt->name);
@@ -307,17 +305,33 @@ static GSList *parse_options(const ucl_object_t *scope, int named) {
 						unordered = g_slist_prepend(unordered, opt);
 						continue;
 					}
-					opt->live_argv   = parse_argv(live);
-					opt->refresh_ms  = parse_duration_ms(ucl_object_tostring(ref));
-					opt->tick_counter = 0;
 
-					const ucl_object_t *ind = ucl_object_lookup(item, "independent");
-					opt->independent = ind && ucl_object_toboolean(ind);
+					struct live *lv = malloc(sizeof(struct live));
+					if(!lv) {
+						fprintf(stderr, "couldn't allocate live\n");
+						continue;
+					}
 
-					const ucl_object_t *sn = ucl_object_lookup(item, "signal_name");
-					opt->signal_name = sn
-					                 ? sanitize_signal_name(ucl_object_tostring(sn))
-					                 : sanitize_signal_name(opt->name);
+					const ucl_object_t *ul = ucl_object_lookup(live_blk, "update_label");
+					const ucl_object_t *lc = ucl_object_lookup(live_blk, "command");
+					lv->update_label_argv = parse_argv(ul);
+					lv->command_argv      = parse_argv(lc);
+					lv->refresh_ms        = parse_duration_ms(ucl_object_tostring(ref));
+					lv->tick_counter      = 0;
+					lv->live_output       = NULL;
+					lv->timer_id          = 0;
+					lv->live_label        = NULL;
+					lv->live_conn         = 0;
+
+					const ucl_object_t *ind = ucl_object_lookup(live_blk, "independent");
+					lv->independent = ind && ucl_object_toboolean(ind);
+
+					const ucl_object_t *sn = ucl_object_lookup(live_blk, "signal_name");
+					lv->signal_name = sn
+					                ? sanitize_signal_name(ucl_object_tostring(sn))
+					                : sanitize_signal_name(opt->name);
+
+					opt->live = lv;
 				}
 
 				const ucl_object_t *ord = ucl_object_lookup(item, "order");
@@ -385,15 +399,7 @@ static void expand_dir(const char *dir_path, const char *pat,
 				 err ? err->message : dir_path);
 			e->name         = strdup(buf);
 			e->command_argv = NULL;
-			e->live_argv    = NULL;
-			e->signal_name  = NULL;
-			e->refresh_ms   = 0;
-			e->tick_counter = 0;
-			e->independent  = false;
-			e->live_output  = NULL;
-			e->timer_id     = 0;
-			e->live_label   = NULL;
-			e->live_conn    = 0;
+			e->live         = NULL;
 			e->order        = -1;
 			*opts = g_slist_prepend(*opts, e);
 		}
@@ -438,16 +444,8 @@ static void expand_dir(const char *dir_path, const char *pat,
 				av[3] = NULL;
 				opt->command_argv = av;
 			}
-			opt->live_argv    = NULL;
-			opt->signal_name  = NULL;
-			opt->refresh_ms   = 0;
-			opt->tick_counter = 0;
-			opt->independent  = false;
-			opt->live_output  = NULL;
-			opt->timer_id     = 0;
-			opt->live_label   = NULL;
-			opt->live_conn    = 0;
-			opt->order        = -1;
+			opt->live  = NULL;
+			opt->order = -1;
 			*opts = g_slist_prepend(*opts, opt);
 		}
 

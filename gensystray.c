@@ -88,8 +88,8 @@ static void on_live_signal(const ss_data_t *data, void *user_data) {
 		gtk_label_set_text(GTK_LABEL(label), output);
 }
 
-/* run opt->live_argv synchronously, capture first line of stdout,
- * update opt->live_output, emit via ss_lib signal.
+/* run opt->live->update_label_argv synchronously, capture first line of stdout,
+ * update opt->live->live_output, emit via ss_lib signal.
  * returns TRUE so g_timeout_add keeps firing.
  */
 static gboolean live_tick(gpointer user_data) {
@@ -99,8 +99,17 @@ static gboolean live_tick(gpointer user_data) {
 	char *err    = NULL;
 	int   status = 0;
 
+	/* run timed command if set (side effect, no label update) */
+	if(opt->live->command_argv) {
+		g_spawn_async(NULL, opt->live->command_argv, NULL,
+			      G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL);
+	}
+
+	if(!opt->live->update_label_argv)
+		return TRUE;
+
 	GError *gerr = NULL;
-	g_spawn_sync(NULL, opt->live_argv, NULL,
+	g_spawn_sync(NULL, opt->live->update_label_argv, NULL,
 		     G_SPAWN_SEARCH_PATH,
 		     NULL, NULL,
 		     &out, &err, &status, &gerr);
@@ -119,11 +128,11 @@ static gboolean live_tick(gpointer user_data) {
 			*nl = '\0';
 	}
 
-	free(opt->live_output);
-	opt->live_output = strdup(out ? out : "");
+	free(opt->live->live_output);
+	opt->live->live_output = strdup(out ? out : "");
 
 	/* emit — slots (label widgets) receive the update if connected */
-	ss_emit_string(opt->signal_name, opt->live_output);
+	ss_emit_string(opt->live->signal_name, opt->live->live_output);
 
 	g_free(out);
 	g_free(err);
@@ -157,9 +166,9 @@ static gboolean master_tick(gpointer user_data) {
 	struct master_ctx *ctx = (struct master_ctx *)user_data;
 	for(GSList *l = ctx->opts; l; l = l->next) {
 		struct option *opt = (struct option *)l->data;
-		opt->tick_counter += ctx->interval_ms;
-		if(opt->tick_counter >= opt->refresh_ms) {
-			opt->tick_counter = 0;
+		opt->live->tick_counter += ctx->interval_ms;
+		if(opt->live->tick_counter >= opt->live->refresh_ms) {
+			opt->live->tick_counter = 0;
 			live_tick(opt);
 		}
 	}
@@ -181,21 +190,21 @@ static void start_live_timers(struct config *config) {
 		struct section *sec = (struct section *)sl->data;
 		for(GSList *ol = sec->options; ol; ol = ol->next) {
 			struct option *opt = (struct option *)ol->data;
-			if(!opt->live_argv)
+			if(!opt->live)
 				continue;
 
-			ss_signal_register(opt->signal_name);
+			ss_signal_register(opt->live->signal_name);
 
 			live_tick(opt);   /* initial value before first interval */
 
-			if(opt->independent) {
-				opt->timer_id = g_timeout_add(opt->refresh_ms, live_tick, opt);
+			if(opt->live->independent) {
+				opt->live->timer_id = g_timeout_add(opt->live->refresh_ms, live_tick, opt);
 				continue;
 			}
 
 			master_opts = g_slist_prepend(master_opts, opt);
-			master_ms   = 0 == master_ms ? opt->refresh_ms
-			                             : gcd(master_ms, opt->refresh_ms);
+			master_ms   = 0 == master_ms ? opt->live->refresh_ms
+			                             : gcd(master_ms, opt->live->refresh_ms);
 		}
 	}
 
@@ -224,23 +233,23 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 
 	if('-' == option->name[0] && NULL == option->command_argv) {
 		menu_item = gtk_separator_menu_item_new();
-	} else if(option->live_argv) {
+	} else if(option->live) {
 		/* live item — label widget connected as ss_lib slot while menu is open */
-		const char *text = option->live_output ? option->live_output : option->name;
+		const char *text = option->live->live_output ? option->live->live_output : option->name;
 		GtkWidget  *label = gtk_label_new(text);
 		gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
 		menu_item = gtk_menu_item_new();
 		gtk_container_add(GTK_CONTAINER(menu_item), label);
-		option->live_label = label;
-		ss_connect_ex(option->signal_name, on_live_signal, label,
-			      SS_PRIORITY_NORMAL, &option->live_conn);
+		option->live->live_label = label;
+		ss_connect_ex(option->live->signal_name, on_live_signal, label,
+			      SS_PRIORITY_NORMAL, &option->live->live_conn);
 		if(option->command_argv)
 			g_signal_connect(G_OBJECT(menu_item), "activate",
 					 G_CALLBACK(delegate_system_call),
 					 option->command_argv);
 		g_signal_connect_swapped(G_OBJECT(menu_item), "destroy",
 					 G_CALLBACK(g_nullify_pointer),
-					 &option->live_label);
+					 &option->live->live_label);
 	} else {
 		menu_item = gtk_menu_item_new_with_label(option->name);
 		g_signal_connect(G_OBJECT(menu_item), "activate",
@@ -258,10 +267,10 @@ static void disconnect_live_slots(struct config *config) {
 		struct section *sec = (struct section *)sl->data;
 		for(GSList *ol = sec->options; ol; ol = ol->next) {
 			struct option *opt = (struct option *)ol->data;
-			if(!opt->live_argv || 0 == opt->live_conn)
+			if(!opt->live || 0 == opt->live->live_conn)
 				continue;
-			ss_disconnect_handle(opt->live_conn);
-			opt->live_conn = 0;
+			ss_disconnect_handle(opt->live->live_conn);
+			opt->live->live_conn = 0;
 		}
 	}
 }
