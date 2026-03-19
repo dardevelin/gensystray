@@ -858,6 +858,9 @@ static void on_glob_changed(GFileMonitor *mon, GFile *file, GFile *other,
 
 	struct monitor_ctx *ctx = (struct monitor_ctx *)user_data;
 
+	if(ctx->config->reload_gen != ctx->gen)
+		return;
+
 	g_slist_free_full(ctx->sec->options, option_dalloc);
 	ctx->sec->options = NULL;
 
@@ -896,6 +899,7 @@ static void watch_dir(const char *dir_path, struct section *sec,
 		ctx->sec    = sec;
 		ctx->config = config;
 		ctx->pop    = pop;
+		ctx->gen    = config->reload_gen;
 		g_signal_connect_data(mon, "changed",
 				      G_CALLBACK(on_glob_changed), ctx,
 				      (GClosureNotify)free, 0);

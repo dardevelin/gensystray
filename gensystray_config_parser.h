@@ -92,6 +92,7 @@ struct monitor_ctx {
 	struct section  *sec;
 	struct config   *config;
 	struct populate *pop;
+	guint            gen;  /* config->reload_gen at monitor creation time */
 };
 
 /* a populate block describes a dynamic source for section items.
