@@ -61,8 +61,9 @@ struct on_block {
  * last_matched: tracks previous tick's match for transition detection.
  */
 struct live {
-	char   **update_label_argv;    /* stdout → label on each tick */
-	GSList  *commands;             /* list of char** argv, timed side effects */
+	char   **update_label_argv;      /* stdout → label on each tick */
+	char   **update_tray_icon_argv;  /* stdout → icon_path_current on each tick */
+	GSList  *commands;               /* list of char** argv, timed side effects */
 	GSList  *on_blocks;            /* struct on_block list, declaration order */
 	struct on_block *last_matched; /* previous tick match, NULL = none */
 	char    *signal_name;          /* sanitized signal name for ss_lib */
@@ -142,15 +143,16 @@ char *get_config_path(void);
 /* holds all configuration state loaded from the config file */
 struct config {
 	char *config_path;
-	char *name;       /* instance name, NULL in single-instance mode */
-	char *icon_path;
+	char *name;                 /* instance name, NULL in single-instance mode */
+	char *icon_path;            /* parsed default from config file */
+	char *icon_path_current;    /* runtime value, initialized from icon_path, overridable */
 	char *tooltip;
 	GSList *sections; /* ordered list of struct section */
 	void *tray_icon;  /* GtkStatusIcon *, kept alive here */
 	void *menu;       /* GtkMenu *, currently open menu or NULL */
-	guint  main_timer_id; /* GLib source ID for master tick, 0 = none */
-	void  *main_tick_ctx;      /* struct main_tick_ctx *, owned by live engine */
-	guint  reload_gen;         /* incremented on every reload; in-flight callbacks check this */
+	guint  main_timer_id;    /* GLib source ID for master tick, 0 = none */
+	void  *main_tick_ctx;    /* struct main_tick_ctx *, owned by live engine */
+	guint  reload_gen;       /* incremented on every reload; in-flight callbacks check this */
 };
 
 /* allocates, populates and returns a GSList of struct config from config_path.

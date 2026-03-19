@@ -96,6 +96,39 @@ static void on_live_signal(const ss_data_t *data, void *user_data) {
 		gtk_label_set_text(GTK_LABEL(label), output);
 }
 
+/* apply icon_path_current and tooltip to the existing GtkStatusIcon.
+ * size-changed stays connected to config so it always reads icon_path_current.
+ */
+static void apply_tray_update(struct config *config) {
+	GtkStatusIcon *icon = (GtkStatusIcon *)config->tray_icon;
+	if(!icon)
+		return;
+
+	const char *path = config->icon_path_current;
+
+	if(!path) {
+		gtk_status_icon_set_from_icon_name(icon, "application-x-executable");
+	} else if('/' == path[0] || '.' == path[0] || '~' == path[0]) {
+		char *expanded = NULL;
+		if('~' == path[0]) {
+			expanded = g_strconcat(g_get_home_dir(), path + 1, NULL);
+			path = expanded;
+		}
+		gint size = gtk_status_icon_get_size(icon);
+		GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_size(path, size, size, NULL);
+		if(pb) {
+			gtk_status_icon_set_from_pixbuf(icon, pb);
+			g_object_unref(pb);
+		}
+		g_free(expanded);
+	} else {
+		gtk_status_icon_set_from_icon_name(icon, path);
+	}
+
+	if(config->tooltip)
+		gtk_status_icon_set_tooltip_text(icon, config->tooltip);
+}
+
 /* context passed to the async update_label callback */
 struct live_cb_ctx {
 	struct option  *opt;
@@ -200,6 +233,48 @@ static void on_update_label_done(GObject *source, GAsyncResult *result,
 	if(stderr_buf) g_bytes_unref(stderr_buf);
 }
 
+/* async callback — runs after update_tray_icon_argv exits.
+ * trims stdout and writes it to icon_path_current, then applies the update.
+ */
+static void on_update_tray_icon_done(GObject *source, GAsyncResult *result,
+				     gpointer user_data)
+{
+	struct live_cb_ctx *ctx  = (struct live_cb_ctx *)user_data;
+	GSubprocess        *proc = ctx->proc;
+	struct config      *config = ctx->config;
+	bool stale = config->reload_gen != ctx->gen;
+	g_free(ctx);
+
+	GBytes *stdout_buf = NULL;
+	GError *gerr       = NULL;
+	g_subprocess_communicate_finish(proc, result, &stdout_buf, NULL, &gerr);
+	if(gerr) g_error_free(gerr);
+	g_object_unref(proc);
+
+	if(stale) {
+		if(stdout_buf) g_bytes_unref(stdout_buf);
+		return;
+	}
+
+	if(!stdout_buf) return;
+
+	gsize        len = 0;
+	const gchar *raw = (const gchar *)g_bytes_get_data(stdout_buf, &len);
+	if(raw && 0 < len) {
+		char *out = g_strndup(raw, len);
+		char *nl  = strchr(out, '\n');
+		if(nl) *nl = '\0';
+
+		if('\0' != out[0]) {
+			free(config->icon_path_current);
+			config->icon_path_current = strdup(out);
+			apply_tray_update(config);
+		}
+		g_free(out);
+	}
+	g_bytes_unref(stdout_buf);
+}
+
 /* launch update_label_argv async and fire timed side-effect commands.
  * returns TRUE so g_timeout_add keeps firing.
  */
@@ -210,29 +285,49 @@ static gboolean live_tick(gpointer user_data) {
 	if(opt->live->commands)
 		spawn_commands(opt->live->commands);
 
-	if(!opt->live->update_label_argv)
-		return TRUE;
+	struct config *owner = (struct config *)opt->live->owner;
+	guint          gen   = owner ? owner->reload_gen : 0;
 
-	GError      *gerr = NULL;
-	GSubprocess *proc = g_subprocess_newv(
-	                        (const gchar * const *)opt->live->update_label_argv,
-	                        G_SUBPROCESS_FLAGS_STDOUT_PIPE |
-	                        G_SUBPROCESS_FLAGS_STDERR_SILENCE,
-	                        &gerr);
-
-	if(!proc) {
-		g_error_free(gerr);
-		return TRUE;
+	if(opt->live->update_label_argv) {
+		GError      *gerr = NULL;
+		GSubprocess *proc = g_subprocess_newv(
+		                        (const gchar * const *)opt->live->update_label_argv,
+		                        G_SUBPROCESS_FLAGS_STDOUT_PIPE |
+		                        G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+		                        &gerr);
+		if(proc) {
+			struct live_cb_ctx *ctx = g_new(struct live_cb_ctx, 1);
+			ctx->opt    = opt;
+			ctx->proc   = proc;
+			ctx->config = owner;
+			ctx->gen    = gen;
+			g_subprocess_communicate_async(proc, NULL, NULL,
+						       on_update_label_done, ctx);
+		} else {
+			g_error_free(gerr);
+		}
 	}
 
-	struct live_cb_ctx *ctx = g_new(struct live_cb_ctx, 1);
-	ctx->opt    = opt;
-	ctx->proc   = proc;
-	ctx->config = (struct config *)opt->live->owner;
-	ctx->gen    = ctx->config ? ctx->config->reload_gen : 0;
+	if(opt->live->update_tray_icon_argv) {
+		GError      *gerr = NULL;
+		GSubprocess *proc = g_subprocess_newv(
+		                        (const gchar * const *)opt->live->update_tray_icon_argv,
+		                        G_SUBPROCESS_FLAGS_STDOUT_PIPE |
+		                        G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+		                        &gerr);
+		if(proc) {
+			struct live_cb_ctx *ctx = g_new(struct live_cb_ctx, 1);
+			ctx->opt    = opt;
+			ctx->proc   = proc;
+			ctx->config = owner;
+			ctx->gen    = gen;
+			g_subprocess_communicate_async(proc, NULL, NULL,
+						       on_update_tray_icon_done, ctx);
+		} else {
+			g_error_free(gerr);
+		}
+	}
 
-	g_subprocess_communicate_async(proc, NULL, NULL,
-				       on_update_label_done, ctx);
 	return TRUE;
 }
 
@@ -382,39 +477,6 @@ static void teardown_config(struct config *config) {
 	free_config_data(config);
 }
 
-/* apply updated icon and tooltip from config to an existing GtkStatusIcon.
- * mirrors the icon selection logic in init_tray without creating a new icon.
- */
-static void apply_tray_update(struct config *config) {
-	GtkStatusIcon *icon = (GtkStatusIcon *)config->tray_icon;
-	if(!icon)
-		return;
-
-	if(!config->icon_path) {
-		gtk_status_icon_set_from_icon_name(icon, "application-x-executable");
-	} else if('/' == config->icon_path[0] || '.' == config->icon_path[0]
-	          || '~' == config->icon_path[0]) {
-		char *path = config->icon_path;
-		char *expanded = NULL;
-		if('~' == path[0]) {
-			expanded = g_strconcat(g_get_home_dir(), path + 1, NULL);
-			path = expanded;
-		}
-		gint size = gtk_status_icon_get_size(icon);
-		GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_size(path, size, size, NULL);
-		if(pb) {
-			gtk_status_icon_set_from_pixbuf(icon, pb);
-			g_object_unref(pb);
-		}
-		g_free(expanded);
-	} else {
-		gtk_status_icon_set_from_icon_name(icon, config->icon_path);
-	}
-
-	if(config->tooltip)
-		gtk_status_icon_set_tooltip_text(icon, config->tooltip);
-}
-
 /* config file change callback — reload policy lives here in main.
  * re-parses the config, filters to the active instance, stops timers,
  * swaps data, and restarts timers for each running instance.
@@ -465,8 +527,8 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file,
 		/* route old data through matched so free_config_data cleans it up,
 		 * and move fresh parsed data into the running config
 		 */
-		char   *new_icon    = matched->icon_path;
-		char   *new_tooltip = matched->tooltip;
+		char   *new_icon     = matched->icon_path;
+		char   *new_tooltip  = matched->tooltip;
 		GSList *new_sections = matched->sections;
 
 		matched->icon_path = old->icon_path;
@@ -476,6 +538,14 @@ static void on_cfg_changed(GFileMonitor *monitor, GFile *file,
 		old->icon_path = new_icon;
 		old->tooltip   = new_tooltip;
 		old->sections  = new_sections;
+
+		/* reset runtime icon to the new parsed default */
+		free(old->icon_path_current);
+		old->icon_path_current = old->icon_path ? strdup(old->icon_path) : NULL;
+
+		/* also route matched's icon_path_current through free */
+		free(matched->icon_path_current);
+		matched->icon_path_current = NULL;
 
 		apply_tray_update(old);
 		start_live_timers(old);
@@ -668,12 +738,24 @@ static GSList *filter_instance(GSList *configs, const char *name) {
 static gboolean on_icon_size_changed(GtkStatusIcon *icon, gint size,
 				     gpointer user_data)
 {
-	const char *path = (const char *)user_data;
-	GdkPixbuf  *pb   = gdk_pixbuf_new_from_file_at_size(path, size, size, NULL);
+	struct config *config = (struct config *)user_data;
+	const char    *path   = config->icon_path_current
+	                      ? config->icon_path_current
+	                      : config->icon_path;
+	if(!path)
+		return FALSE;
+
+	char *expanded = NULL;
+	if('~' == path[0]) {
+		expanded = g_strconcat(g_get_home_dir(), path + 1, NULL);
+		path = expanded;
+	}
+	GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_size(path, size, size, NULL);
+	g_free(expanded);
 	if(pb) {
 		gtk_status_icon_set_from_pixbuf(icon, pb);
 		g_object_unref(pb);
-		return TRUE;  /* handled — suppress GTK's default scaling */
+		return TRUE;
 	}
 	return FALSE;
 }
@@ -685,33 +767,34 @@ static gboolean on_icon_size_changed(GtkStatusIcon *icon, gint size,
 static GtkStatusIcon *init_tray(struct config *config) {
 	GtkStatusIcon *icon = NULL;
 
-	if(!config->icon_path) {
+	/* initialize runtime icon path from parsed default */
+	if(!config->icon_path_current && config->icon_path)
+		config->icon_path_current = strdup(config->icon_path);
+
+	const char *path = config->icon_path_current;
+
+	if(!path) {
 		/* no icon specified — fall back to a generic theme icon */
 		icon = gtk_status_icon_new_from_icon_name("application-x-executable");
-	} else if('/' == config->icon_path[0] || '.' == config->icon_path[0]
-	          || '~' == config->icon_path[0]) {
-		/* absolute, relative, or ~ path → load as file.
-		 * connect size-changed so the pixbuf is reloaded at the exact
-		 * size the tray requests (22, 24, 32 …) rather than 16x16.
-		 */
-		char *path = config->icon_path;
+	} else if('/' == path[0] || '.' == path[0] || '~' == path[0]) {
+		/* absolute, relative, or ~ path → load as file */
 		char *expanded = NULL;
 		if('~' == path[0]) {
 			expanded = g_strconcat(g_get_home_dir(), path + 1, NULL);
 			path = expanded;
 		}
 		icon = gtk_status_icon_new_from_file(path);
-		/* pass a strdup of the resolved path; freed when icon is destroyed */
-		g_signal_connect_data(G_OBJECT(icon), "size-changed",
-				      G_CALLBACK(on_icon_size_changed),
-				      strdup(path),
-				      (GClosureNotify)free, 0);
 		g_free(expanded);
 	} else {
-		/* no path separator → treat as XDG theme icon name;
-		 * GTK handles size negotiation automatically for theme icons */
-		icon = gtk_status_icon_new_from_icon_name(config->icon_path);
+		/* no path separator → treat as XDG theme icon name */
+		icon = gtk_status_icon_new_from_icon_name(path);
 	}
+
+	/* always connect size-changed so pixbuf reloads at the exact tray size;
+	 * reads icon_path_current at callback time so runtime changes take effect
+	 */
+	g_signal_connect(G_OBJECT(icon), "size-changed",
+			 G_CALLBACK(on_icon_size_changed), config);
 
 	if(config->tooltip)
 		gtk_status_icon_set_tooltip_text(icon, config->tooltip);

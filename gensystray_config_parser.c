@@ -269,6 +269,7 @@ static void live_dalloc(struct live *lv) {
 	if(!lv)
 		return;
 	g_strfreev(lv->update_label_argv);
+	g_strfreev(lv->update_tray_icon_argv);
 	command_list_free(lv->commands);
 	g_slist_free_full(lv->on_blocks, on_block_dalloc);
 	free(lv->signal_name);
@@ -619,14 +620,16 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 						continue;
 					}
 
-					const ucl_object_t *ul = ucl_object_lookup(live_blk, "update_label");
-					const ucl_object_t *lc = ucl_object_lookup(live_blk, "command");
-					lv->update_label_argv = parse_argv(ul);
-					lv->commands          = parse_command_list(lc);
+					const ucl_object_t *ul  = ucl_object_lookup(live_blk, "update_label");
+					const ucl_object_t *uti = ucl_object_lookup(live_blk, "update_tray_icon");
+					const ucl_object_t *lc  = ucl_object_lookup(live_blk, "command");
+					lv->update_label_argv     = parse_argv(ul);
+					lv->update_tray_icon_argv = parse_argv(uti);
+					lv->commands              = parse_command_list(lc);
 					lv->refresh_ms        = parse_duration_ms(ucl_object_tostring(ref));
-					lv->tick_counter      = 0;
-					lv->live_output       = NULL;
-					lv->timer_id          = 0;
+					lv->tick_counter          = 0;
+					lv->live_output           = NULL;
+					lv->timer_id              = 0;
 					lv->live_label        = NULL;
 					lv->live_conn         = 0;
 					lv->last_matched      = NULL;
@@ -1126,8 +1129,9 @@ static struct config *parse_scope(const char *config_path, const char *name,
 
 	config->config_path = strdup(config_path);
 	config->name        = name ? strdup(name) : NULL;
-	config->icon_path   = NULL;
-	config->tooltip     = NULL;
+	config->icon_path         = NULL;
+	config->icon_path_current = NULL;
+	config->tooltip           = NULL;
 	config->sections    = NULL;
 	config->tray_icon       = NULL;
 	config->menu            = NULL;
@@ -1138,8 +1142,10 @@ static struct config *parse_scope(const char *config_path, const char *name,
 	const ucl_object_t *tray = ucl_object_lookup(scope, "tray");
 	if(tray) {
 		const ucl_object_t *icon = ucl_object_lookup(tray, "icon");
-		if(icon)
-			config->icon_path = strdup(ucl_object_tostring(icon));
+		if(icon) {
+			config->icon_path         = strdup(ucl_object_tostring(icon));
+			config->icon_path_current = strdup(ucl_object_tostring(icon));
+		}
 
 		const ucl_object_t *tooltip = ucl_object_lookup(tray, "tooltip");
 		if(tooltip)
@@ -1290,6 +1296,7 @@ void free_config_data(struct config *config) {
 	free(config->config_path);
 	free(config->name);
 	free(config->icon_path);
+	free(config->icon_path_current);
 	free(config->tooltip);
 
 	g_slist_free_full(config->sections, section_dalloc);
