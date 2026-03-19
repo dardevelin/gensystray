@@ -1,4 +1,4 @@
-# GenSysTray 2.0.0
+# GenSysTray 2.0.1
 
 A configurable system tray utility written in C. Click a tray icon to get a menu of commands.
 
@@ -11,7 +11,7 @@ GPLv3, no later option. See LICENSE or http://www.gnu.org/licenses/gpl-3.0.txt
 Dependencies: `gtk+3`, `gcc`, `make`, `pkg-config`
 
 ```sh
-make init   # fetch submodules (libucl)
+make init   # fetch submodules (libucl, ss_lib)
 make        # build
 make run    # build and run
 ```
@@ -49,8 +49,9 @@ item "Editor" {
 
 ### Multiple instances
 
-One config file can declare multiple tray icons. Everything must be inside
-`instance` blocks — no top-level items or tray block allowed.
+One config file can declare multiple tray icons via `instance` blocks.
+No top-level items or tray block are allowed when using instances.
+Start a specific instance with `--instance <name>`.
 
 ```hcl
 instance "work" {
@@ -76,10 +77,36 @@ instance "personal" {
 }
 ```
 
+### Commands
+
+Three forms are supported:
+
+```hcl
+# string — runs via $SHELL -c, falls back to sh
+item "Date" {
+  command = "date >> /tmp/log.txt"
+}
+
+# array — direct exec, no shell, arguments are safe from splitting
+item "Editor" {
+  command = ["nvim", "--listen", "/tmp/nvim.sock"]
+}
+
+# heredoc with shebang — explicit interpreter per item
+item "Script" {
+  command = <<EOD
+#!/usr/bin/env python3
+import datetime
+with open("/tmp/log.txt", "a") as f:
+    f.write(str(datetime.datetime.now()) + "\n")
+EOD
+}
+```
+
 ### Item ordering
 
-Items without `order` appear in declaration order. Items with `order` come
-first, sorted by value. Separators follow the same rules.
+Items with `order` come first, sorted by value. Items without `order` follow
+in declaration order. Separators obey the same rules.
 
 ```hcl
 item "First" {
@@ -94,6 +121,128 @@ item "Second" {
 
 item "Appended" {
   command = "echo appended"
+}
+```
+
+### Live items
+
+Live items run a command on a timer and display the output as the label.
+`refresh` is required when `live` is set.
+
+```hcl
+item "Clock" {
+  live    = "date '+%H:%M:%S'"
+  refresh = "1s"
+}
+
+item "Uptime" {
+  live    = "uptime | awk '{print $3}'"
+  refresh = "5s"
+}
+```
+
+Supported refresh units: `ms`, `s`, `m`, `h`.
+
+A live item can also have a `command` — the label updates on the timer,
+clicking runs the command:
+
+```hcl
+item "Clock" {
+  live    = "date '+%H:%M:%S'"
+  refresh = "1s"
+  command = ["open", "-a", "Calendar"]
+}
+```
+
+By default all live items share a single master timer running at the GCD
+of their refresh intervals. Add `independent = true` to give an item its
+own timer:
+
+```hcl
+item "Sensor" {
+  live        = "cat /dev/sensor"
+  refresh     = "100ms"
+  independent = true
+}
+```
+
+### Sections
+
+Sections group items into submenus (collapsed) or inline groups (expanded).
+
+```hcl
+# collapsed — renders as a submenu
+section "Tools" {
+  item "Htop" {
+    command = ["xterm", "-e", "htop"]
+  }
+  item "Logs" {
+    command = ["xterm", "-e", "tail -f /var/log/syslog"]
+  }
+}
+
+# expanded — renders inline with separators
+section "Status" {
+  expanded   = true
+  separators = true   # "top", "bottom", "none", or true (both)
+  show_label = true
+
+  item "Clock" {
+    live    = "date '+%H:%M:%S'"
+    refresh = "1s"
+  }
+}
+```
+
+### Dynamic sections (glob populate)
+
+Sections can be populated dynamically from the filesystem:
+
+```hcl
+section "Notes" {
+  expanded = true
+
+  populate {
+    from    = "glob"
+    pattern = "~/notes/*.md"
+    watch   = true        # re-expands when files are added or removed
+    depth   = 0           # 0 = current dir only, N = N levels, -1 = unlimited
+    hierarchy = false     # true = subdirs become submenus
+
+    item {
+      label   = "{filename}"
+      command = ["nvim", "{filepath}"]
+    }
+  }
+}
+```
+
+Multiple populate blocks per section are supported — each with its own
+pattern and item template:
+
+```hcl
+section "Documents" {
+  expanded = true
+
+  populate {
+    from    = "glob"
+    pattern = "~/docs/*.md"
+    watch   = true
+    item {
+      label   = "{filename}"
+      command = ["nvim", "{filepath}"]
+    }
+  }
+
+  populate {
+    from    = "glob"
+    pattern = "~/docs/*.pdf"
+    watch   = true
+    item {
+      label   = "{filename}"
+      command = ["zathura", "{filepath}"]
+    }
+  }
 }
 ```
 
