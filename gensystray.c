@@ -94,45 +94,52 @@ static void on_live_signal(const ss_data_t *data, void *user_data) {
 		gtk_label_set_text(GTK_LABEL(label), output);
 }
 
-/* run opt->live->update_label_argv synchronously, capture first line of stdout,
- * update opt->live->live_output, emit via ss_lib signal.
- * returns TRUE so g_timeout_add keeps firing.
+/* context passed to the async update_label callback */
+struct live_cb_ctx {
+	struct option *opt;
+	GSubprocess   *proc;
+};
+
+/* async callback — runs on the GTK main loop after update_label_argv exits.
+ * trims stdout, matches on blocks, updates the label, emits the signal.
  */
-static gboolean live_tick(gpointer user_data) {
-	struct option *opt = (struct option *)user_data;
+static void on_update_label_done(GObject *source, GAsyncResult *result,
+				 gpointer user_data)
+{
+	struct live_cb_ctx *ctx  = (struct live_cb_ctx *)user_data;
+	struct option      *opt  = ctx->opt;
+	GSubprocess        *proc = ctx->proc;
+	g_free(ctx);
 
-	char *out    = NULL;
-	char *err    = NULL;
-	int   status = 0;
+	GBytes *stdout_buf = NULL;
+	GBytes *stderr_buf = NULL;
+	GError *gerr       = NULL;
 
-	/* run timed commands if set (side effects, no label update) */
-	if(opt->live->commands)
-		spawn_commands(opt->live->commands);
-
-	if(!opt->live->update_label_argv)
-		return TRUE;
-
-	GError *gerr = NULL;
-	g_spawn_sync(NULL, opt->live->update_label_argv, NULL,
-		     G_SPAWN_SEARCH_PATH,
-		     NULL, NULL,
-		     &out, &err, &status, &gerr);
+	g_subprocess_communicate_finish(proc, result,
+					&stdout_buf, &stderr_buf, &gerr);
+	g_object_unref(proc);
 
 	if(gerr) {
 		g_error_free(gerr);
-		g_free(out);
-		g_free(err);
-		return TRUE;
+		if(stdout_buf) g_bytes_unref(stdout_buf);
+		if(stderr_buf) g_bytes_unref(stderr_buf);
+		return;
 	}
 
-	/* trim trailing newline */
-	if(out) {
-		char *nl = strchr(out, '\n');
-		if(nl)
-			*nl = '\0';
-	}
+	gsize        len = 0;
+	const gchar *raw = stdout_buf
+	                 ? (const gchar *)g_bytes_get_data(stdout_buf, &len)
+	                 : "";
 
-	char *trimmed = out ? out : "";
+	/* copy stdout so we can mutate (trim newline) */
+	char *out = g_strndup(raw, len);
+	char *nl  = strchr(out, '\n');
+	if(nl)
+		*nl = '\0';
+
+	char *trimmed = out;
+
+	int status = g_subprocess_get_exit_status(proc);
 
 	/* match on blocks — first match wins */
 	struct on_block *matched = NULL;
@@ -169,7 +176,41 @@ static gboolean live_tick(gpointer user_data) {
 	ss_emit_string(opt->live->signal_name, opt->live->live_output);
 
 	g_free(out);
-	g_free(err);
+	if(stdout_buf) g_bytes_unref(stdout_buf);
+	if(stderr_buf) g_bytes_unref(stderr_buf);
+}
+
+/* launch update_label_argv async and fire timed side-effect commands.
+ * returns TRUE so g_timeout_add keeps firing.
+ */
+static gboolean live_tick(gpointer user_data) {
+	struct option *opt = (struct option *)user_data;
+
+	/* run timed commands if set (side effects, no label update) */
+	if(opt->live->commands)
+		spawn_commands(opt->live->commands);
+
+	if(!opt->live->update_label_argv)
+		return TRUE;
+
+	GError      *gerr = NULL;
+	GSubprocess *proc = g_subprocess_newv(
+	                        (const gchar * const *)opt->live->update_label_argv,
+	                        G_SUBPROCESS_FLAGS_STDOUT_PIPE |
+	                        G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+	                        &gerr);
+
+	if(!proc) {
+		g_error_free(gerr);
+		return TRUE;
+	}
+
+	struct live_cb_ctx *ctx = g_new(struct live_cb_ctx, 1);
+	ctx->opt  = opt;
+	ctx->proc = proc;
+
+	g_subprocess_communicate_async(proc, NULL, NULL,
+				       on_update_label_done, ctx);
 	return TRUE;
 }
 
