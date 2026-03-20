@@ -36,17 +36,47 @@ Download the latest `GenSysTray-<version>-macos.zip` from [Releases](https://git
 
 The app is signed and notarized — Gatekeeper will not block it.
 
+### Linux — Arch (AUR)
+
+```sh
+yay -S gensystray
+```
+
+Or manually:
+
+```sh
+git clone https://github.com/dardevelin/gensystray
+cd gensystray
+makepkg -si
+```
+
 ### Linux — Build from source
 
 ```sh
 git clone https://github.com/dardevelin/gensystray
 cd gensystray
 make init
-make
-./gensystray
+make release
+sudo make install            # installs to /usr/local
+# or: make install PREFIX=/usr  # for system-wide (/usr/bin, /usr/share)
 ```
 
 Dependencies: `gtk+3`, `gcc`, `make`, `pkg-config`
+
+### Install layout
+
+`make install` places files under `PREFIX` (default `/usr/local`):
+
+```
+PREFIX/
+  bin/gensystray                           # binary
+  share/gensystray/gensystray_error.png    # error state icon
+  share/gensystray/gensystray_default.png  # default icon
+  share/gensystray/examples/*.cfg          # example configs
+  share/licenses/gensystray/LICENSE        # license
+```
+
+Override with `PREFIX=/opt/homebrew` (Homebrew) or `PREFIX=/usr` (AUR/system).
 
 ## Configuration
 
@@ -224,6 +254,80 @@ section "Notes" {
 }
 ```
 
+### Watch events
+
+React to filesystem changes in watched populate sources.
+
+```hcl
+section "Notes" {
+  expanded = true
+  populate {
+    from    = "glob"
+    pattern = "~/notes/*.md"
+    watch   = true
+    item { label = "{filename}"; command = "xdg-open {filepath}" }
+  }
+
+  on watch-create { command = "notify-send 'New note' '{filename}'" }
+  on watch-delete { command = "notify-send 'Removed' '{filename}'" }
+  on watch-change { command = "notify-send 'Updated' '{filename}'" }
+}
+```
+
+`{filepath}` and `{filename}` are substituted with the path that triggered the event.
+
+### Emit signals
+
+Items can emit named signals with payloads. Sections listen with `on emit` blocks.
+
+```hcl
+item "Deploy" {
+  command = "deploy.sh production"
+  emit { signal = "deploy"; value = "production" }
+}
+
+section "Dashboard" {
+  on emit "deploy" {
+    command = "notify-send 'Deploying {value}'"
+  }
+}
+```
+
+`emit` works in every action context: item click, `on exit`/`on output` transitions, `on watch-*` events, and `on emit` blocks (chaining).
+
+Signals are instance-scoped by default. Prefix with `global.` for cross-instance delivery:
+
+```hcl
+emit { signal = "global.build_done"; value = "ok" }
+```
+
+Circular emit chains are guarded by a depth limit (default 16, configurable via `tray { max_emit_depth = 32 }`).
+
+### Separators
+
+```hcl
+# plain line
+item "--" { separator = true }
+
+# labeled separators (grayed-out header with line positioning)
+item "Group A" { separator = "top" }     # line above + label
+item "Group B" { separator = "bottom" }  # label + line below
+item "Group C" { separator = "both" }    # line + label + line
+
+# suppress the label, keep only the line(s)
+item "Hidden" { separator = "bottom"; show_label = false }
+```
+
+Section-level separators wrap expanded sections:
+
+```hcl
+section "Tools" {
+  expanded   = true
+  separators = "top"    # true, "top", "bottom", "both", "none", false
+  show_label = true     # show section name as grayed header
+}
+```
+
 ### Item ordering
 
 Items with `order` come first, sorted by value. Items without follow in declaration order.
@@ -233,6 +337,16 @@ item "First"    { command = "echo first"    order = 1 }
 item "Second"   { command = "echo second"   order = 2 }
 item "Appended" { command = "echo appended" }
 ```
+
+### Error icon
+
+Config errors (broken syntax, missing icon file, failed reload) show on the tray icon itself. The error icon is resolved in order:
+
+1. `tray { error_icon = "~/path/to/custom_error.png" }` — user override
+2. `gensystray_error.png` next to the binary or in `DATADIR`
+3. Theme icon `dialog-error`
+
+The error clears automatically when the config is fixed and saved.
 
 ## Building from source (macOS)
 
