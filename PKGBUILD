@@ -1,4 +1,4 @@
-# Maintainer: Darcy Bras da Silva <dardevelin@gmail.com>
+# Maintainer: Darcy Bras da Silva <stardevelin@gmail.com>
 pkgname=gensystray
 pkgver=2.6.0
 pkgrel=1
