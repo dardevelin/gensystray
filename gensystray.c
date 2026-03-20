@@ -882,8 +882,42 @@ void gensystray_option_to_item(gpointer data, gpointer param) {
 	struct option *option = (struct option*)data;
 	GtkWidget *menu_item = NULL;
 
-	if('-' == option->name[0] && NULL == option->commands) {
-		menu_item = gtk_separator_menu_item_new();
+	if(option->is_separator) {
+		/* separator item rendering:
+		 * sep_style controls line placement, show_label controls the label.
+		 * show_label=false with any style renders only the line(s).
+		 */
+		bool line_top = option->sep_style == SEPARATORS_TOP
+		             || option->sep_style == SEPARATORS_BOTH;
+		bool line_bot = option->sep_style == SEPARATORS_BOTTOM
+		             || option->sep_style == SEPARATORS_BOTH;
+
+		if(!option->show_label) {
+			/* no label — render line(s) only */
+			if(line_top)
+				gtk_menu_shell_append((GtkMenuShell *)menu,
+						      gtk_separator_menu_item_new());
+			if(line_bot || option->sep_style == SEPARATORS_NONE) {
+				menu_item = gtk_separator_menu_item_new();
+			} else {
+				gtk_widget_show_all(GTK_WIDGET(menu));
+				return;
+			}
+		} else {
+			/* labeled separator */
+			if(line_top)
+				gtk_menu_shell_append((GtkMenuShell *)menu,
+						      gtk_separator_menu_item_new());
+			menu_item = gtk_menu_item_new_with_label(option->name);
+			gtk_widget_set_sensitive(menu_item, FALSE);
+			if(line_bot) {
+				gtk_menu_shell_append((GtkMenuShell *)menu, menu_item);
+				gtk_menu_shell_append((GtkMenuShell *)menu,
+						      gtk_separator_menu_item_new());
+				gtk_widget_show_all(GTK_WIDGET(menu));
+				return;
+			}
+		}
 	} else if(option->subopts && !option->subopts_expanded) {
 		/* hierarchy submenu — subdirectory as a collapsed nested menu */
 		menu_item = gtk_menu_item_new_with_label(option->name);

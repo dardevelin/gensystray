@@ -1179,19 +1179,55 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 				opt->name = strdup(key ? key : "");
 
 				static const char *known_item[] = {
-					"separator", "command", "emit", "live", "order", NULL
+					"separator", "show_label", "command", "emit", "live", "order", NULL
 				};
 				char item_desc[128];
 				snprintf(item_desc, sizeof(item_desc), "item '%s'", opt->name);
 				warn_unknown_keys(item, known_item, item_desc);
 
 				const ucl_object_t *sep = ucl_object_lookup(item, "separator");
-				if(sep && ucl_object_toboolean(sep)) {
-					free(opt->name);
-					opt->name     = strdup("--");
-					opt->commands = NULL;
-					opt->emit     = NULL;
-					opt->live     = NULL;
+				if(sep && (ucl_object_toboolean(sep)
+				           || UCL_STRING == ucl_object_type(sep))) {
+					/* warn if separator has command/emit/live — they are ignored */
+					if(ucl_object_lookup(item, "command"))
+						fprintf(stderr, "gensystray: item '%s': separator items do not accept commands (ignored)\n", opt->name);
+					if(ucl_object_lookup(item, "emit"))
+						fprintf(stderr, "gensystray: item '%s': separator items do not accept emit (ignored)\n", opt->name);
+					if(ucl_object_lookup(item, "live"))
+						fprintf(stderr, "gensystray: item '%s': separator items do not accept live (ignored)\n", opt->name);
+
+					/* parse separator style:
+					 * true      = plain line (SEPARATORS_BOTH used as "line only")
+					 * "top"     = line above + grayed label
+					 * "bottom"  = grayed label + line below
+					 * "both"    = line above + grayed label + line below
+					 */
+					opt->sep_style = SEPARATORS_NONE; /* default: plain line only */
+					if(UCL_STRING == ucl_object_type(sep)) {
+						const char *sv = ucl_object_tostring(sep);
+						if(sv && 0 == strcmp(sv, "top"))
+							opt->sep_style = SEPARATORS_TOP;
+						else if(sv && 0 == strcmp(sv, "bottom"))
+							opt->sep_style = SEPARATORS_BOTTOM;
+						else if(sv && 0 == strcmp(sv, "both"))
+							opt->sep_style = SEPARATORS_BOTH;
+						else if(sv)
+							fprintf(stderr, "gensystray: item '%s': separator value '%s' not recognized (use true, \"top\", \"bottom\", \"both\")\n", opt->name, sv);
+					}
+
+					/* show_label defaults to true for string separators,
+					 * false for plain line (separator = true). user can override.
+					 */
+					const ucl_object_t *sl = ucl_object_lookup(item, "show_label");
+					if(sl)
+						opt->show_label = ucl_object_toboolean(sl);
+					else
+						opt->show_label = (opt->sep_style != SEPARATORS_NONE);
+
+					opt->commands     = NULL;
+					opt->emit         = NULL;
+					opt->is_separator = true;
+					opt->live         = NULL;
 					opt->subopts          = NULL;
 					opt->subopts_expanded = false;
 					opt->order            = -1;
@@ -1201,8 +1237,11 @@ static GSList *parse_options(const ucl_object_t *scope, int named,
 
 				const ucl_object_t *cmd = ucl_object_lookup(item, "command");
 				opt->commands = parse_command_list(cmd);
-				opt->emit         = NULL;
-				opt->live         = NULL;
+				opt->emit             = NULL;
+				opt->is_separator     = false;
+				opt->show_label       = false;
+				opt->sep_style        = SEPARATORS_NONE;
+				opt->live             = NULL;
 				opt->subopts          = NULL;
 				opt->subopts_expanded = false;
 
@@ -1373,8 +1412,11 @@ static void expand_dir(const char *dir_path, const char *pat,
 			snprintf(buf, sizeof(buf), "[!] watch error: %s",
 				 err ? err->message : dir_path);
 			e->name         = strdup(buf);
-			e->commands = NULL;
+			e->commands     = NULL;
 			e->emit         = NULL;
+			e->is_separator = false;
+			e->show_label   = false;
+			e->sep_style    = SEPARATORS_NONE;
 			e->live         = NULL;
 			e->subopts          = NULL;
 			e->subopts_expanded = false;
@@ -1411,6 +1453,9 @@ static void expand_dir(const char *dir_path, const char *pat,
 							dir_opt->name             = strdup(fname);
 							dir_opt->commands         = NULL;
 							dir_opt->emit             = NULL;
+							dir_opt->is_separator     = false;
+							dir_opt->show_label       = false;
+							dir_opt->sep_style        = SEPARATORS_NONE;
 							dir_opt->live             = NULL;
 							dir_opt->subopts          = sub;
 							dir_opt->subopts_expanded = pop->hierarchy_expanded;
@@ -1450,6 +1495,9 @@ static void expand_dir(const char *dir_path, const char *pat,
 				opt->commands = g_slist_append(NULL, av);
 			}
 			opt->emit             = NULL;
+			opt->is_separator     = false;
+			opt->show_label       = false;
+			opt->sep_style        = SEPARATORS_NONE;
 			opt->live             = NULL;
 			opt->subopts          = NULL;
 			opt->subopts_expanded = false;

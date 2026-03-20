@@ -91,6 +91,13 @@ struct option {
 	char       *name;
 	GSList     *commands;        /* list of char** argv, click actions, NULL if none */
 	struct emit *emit;           /* NULL if no emit block */
+	bool        is_separator;    /* true = render as separator item */
+	bool        show_label;      /* separator: true = show grayed name (default for top/bottom/both),
+	                              * false = suppress label, render only the line(s) */
+	section_separators sep_style; /* BOTH = line above + label + line below;
+	                               * TOP = line above + label;
+	                               * BOTTOM = label + line below;
+	                               * NONE = plain line only (separator = true) */
 	int         order;           /* -1 = unordered (declaration order) */
 	struct live *live;           /* NULL for static items */
 	GSList     *subopts;         /* child options for hierarchy submenus, NULL if leaf */
