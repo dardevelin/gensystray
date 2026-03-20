@@ -1,5 +1,7 @@
 CC      = gcc
-CFLAGS  = -Wall -Werror -std=gnu11 -Wno-deprecated-declarations -DVERSION=\"2.6.0\"
+PREFIX  ?= /usr/local
+DATADIR  = $(PREFIX)/share/gensystray
+CFLAGS  = -Wall -Werror -std=gnu11 -Wno-deprecated-declarations -DVERSION=\"2.6.0\" -DDATADIR=\"$(DATADIR)\"
 LDFLAGS =
 
 PKG_CFLAGS = $(shell pkg-config --cflags gtk+-3.0)
@@ -84,6 +86,21 @@ release: LDFLAGS += $(RELEASE_LDFLAGS)
 release: clean $(TARGET)
 	strip $(TARGET)
 	@ls -lh $(TARGET) | awk '{print "release binary: " $$5}'
+
+DESTDIR ?=
+
+install: $(TARGET)
+	install -Dm755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/$(TARGET)
+	install -Dm644 gensystray_error.png $(DESTDIR)$(DATADIR)/gensystray_error.png
+	install -Dm644 gensystray_default.png $(DESTDIR)$(DATADIR)/gensystray_default.png
+	install -Dm644 LICENSE $(DESTDIR)$(PREFIX)/share/licenses/gensystray/LICENSE
+	install -d $(DESTDIR)$(DATADIR)/examples
+	install -m644 examples/*.cfg $(DESTDIR)$(DATADIR)/examples/
+
+uninstall:
+	rm -f $(DESTDIR)$(PREFIX)/bin/$(TARGET)
+	rm -rf $(DESTDIR)$(DATADIR)
+	rm -rf $(DESTDIR)$(PREFIX)/share/licenses/gensystray
 
 init:
 	git submodule update --init --recursive

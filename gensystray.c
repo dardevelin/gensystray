@@ -76,22 +76,35 @@ static void show_tray_error(struct config *config, const char *msg) {
 		g_free(expanded);
 	}
 
-	/* try bundled error icon next to the binary */
+	/* try bundled error icon: next to binary, then installed data dir */
 	if(!icon_set) {
+		const char *search[2] = { NULL, NULL };
+		int n = 0;
+
 		char *self = g_find_program_in_path("gensystray");
+		char *beside = NULL;
 		if(self) {
 			char *dir = g_path_get_dirname(self);
-			char *bundled = g_build_filename(dir, "gensystray_error.png", NULL);
-			GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_size(bundled, size, size, NULL);
+			beside = g_build_filename(dir, "gensystray_error.png", NULL);
+			search[n++] = beside;
+			g_free(dir);
+			g_free(self);
+		}
+
+#ifdef DATADIR
+		search[n++] = DATADIR "/gensystray_error.png";
+#endif
+
+		for(int i = 0; i < n && !icon_set; i++) {
+			if(!search[i]) continue;
+			GdkPixbuf *pb = gdk_pixbuf_new_from_file_at_size(search[i], size, size, NULL);
 			if(pb) {
 				gtk_status_icon_set_from_pixbuf(icon, pb);
 				g_object_unref(pb);
 				icon_set = true;
 			}
-			g_free(bundled);
-			g_free(dir);
-			g_free(self);
 		}
+		g_free(beside);
 	}
 
 	/* last resort: theme icon */
